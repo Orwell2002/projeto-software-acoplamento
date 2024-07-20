@@ -78,7 +78,7 @@ class Node(QGraphicsEllipseItem):
         edit_frequency_action = menu.addAction(QIcon('icons/edit_frequency.svg'), "Editar Frequência")
         edit_node_color_action = menu.addAction(QIcon('icons/edit_node_color.svg'), "Editar Cor do Nó")
         edit_node_id_action = menu.addAction(QIcon('icons/edit_node_id.svg'), "Editar ID do Nó")
-        delete_node_action = menu.addAction(QIcon('icons/delete_node.svg'), "Excluir Nó")
+        delete_node_action = menu.addAction(QIcon('icons/delete.svg'), "Excluir Nó")
 
         action = menu.exec_(event.screenPos())
         if action == edit_frequency_action:
@@ -101,8 +101,9 @@ class Node(QGraphicsEllipseItem):
             self.frequency_text.setPlainText('')
 
 class Edge(QGraphicsLineItem):
-    def __init__(self, start_node, end_node, bidirectional=False):
+    def __init__(self, start_node, end_node, main_window, bidirectional=False):
         super().__init__()
+        self.main_window = main_window
         self.start_node = start_node
         self.end_node = end_node
         self.bidirectional = bidirectional
@@ -169,6 +170,33 @@ class Edge(QGraphicsLineItem):
         arrow_head << line.p1() << arrow_p1 << arrow_p2
 
         painter.drawPolygon(arrow_head)
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.main_window.select_edge(self)
+        super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event):
+        menu = QMenu()
+
+        if self.bidirectional:
+            toggle_direction_text = "Tornar Direcional"
+            toggle_direction_icon = QIcon('icons/unidirectional_arrow.svg')
+        else:
+            toggle_direction_text = "Tornar Bidirecional"
+            toggle_direction_icon = QIcon('icons/bidirectional_arrow.svg')
+
+        toggle_direction_action = menu.addAction(toggle_direction_icon, toggle_direction_text)
+        invert_direction_action = menu.addAction(QIcon('icons/invert_direction.svg'), "Inverter Aresta")
+        delete_edge_action = menu.addAction(QIcon('icons/delete.svg'), "Excluir Aresta")
+
+        action = menu.exec_(event.screenPos())
+        if action == toggle_direction_action:
+            self.main_window.toggle_edge_direction(self)
+        elif action == delete_edge_action:
+            self.main_window.delete_edge(self)
+        elif action == invert_direction_action:
+            self.main_window.invert_edge_direction(self)
 
 class CustomGraphicsScene(QGraphicsScene):
     def __init__(self, parent=None):
@@ -177,8 +205,10 @@ class CustomGraphicsScene(QGraphicsScene):
 
     def mousePressEvent(self, event):
         item = self.itemAt(event.scenePos(), QTransform())
-        if not isinstance(item, Node):
-            self.main_window.deselect_node()
+        if isinstance(item, Edge):
+            self.main_window.select_edge(item)
+        elif not isinstance(item, Node):
+            self.main_window.deselect_item()
         super().mousePressEvent(event)
 
 class MainWindow(QMainWindow):
@@ -228,6 +258,7 @@ class MainWindow(QMainWindow):
         self.nodes = []
         self.edges = []
         self.selected_node = None
+        self.selected_edge = None
         self.node_id_counter = 1
         self.available_ids = []
         self.adding_edge = False
@@ -284,6 +315,15 @@ class MainWindow(QMainWindow):
             self.set_nodes_movable(True)
             self.add_edge_button.setText('Adicionar Aresta')
     
+    def toggle_edge_direction(self, edge):
+        edge.bidirectional = not edge.bidirectional
+        self.update_graph()
+
+    def invert_edge_direction(self, edge):
+        if not edge.bidirectional:
+            edge.start_node, edge.end_node = edge.end_node, edge.start_node
+            self.update_graph()
+
     def select_node(self, node):
         if self.adding_edge:
             if not self.start_node:
@@ -307,20 +347,44 @@ class MainWindow(QMainWindow):
             self.highlight_node(node, True)  # Destaque o nó selecionado
             self.selected_node = node
     
+    def select_edge(self, edge):
+        if self.selected_edge and self.selected_edge != edge:
+            self.deselect_edge()
+        self.highlight_edge(edge, True)
+        self.selected_edge = edge
+
     def highlight_node(self, node, highlight):
         if highlight:
             node.setPen(QPen(Qt.white, 4))  # Destaque o nó com uma borda branca
         else:
             node.setPen(QPen(node.default_color.darker(150), 4))  # Restaura a borda padrão
+    
+    def highlight_edge(self, edge, highlight):
+        if highlight:
+            edge.setPen(QPen(Qt.yellow, 4))  # Destaque a aresta com uma cor amarela
+        else:
+            edge.setPen(QPen(QColor(255, 255, 255), 2))  # Restaura a cor padrão
 
     def deselect_node(self):
         if self.selected_node:
             self.highlight_node(self.selected_node, False)
             self.selected_node = None
     
+    def deselect_edge(self):
+        if self.selected_edge:
+            self.highlight_edge(self.selected_edge, False)
+            self.selected_edge = None
+
+    def deselect_item(self):
+        self.deselect_node()
+        self.deselect_edge()
+    
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Delete and self.selected_node:
-            self.delete_node(self.selected_node)
+        if event.key() == Qt.Key_Delete:
+            if self.selected_node:
+                self.delete_node(self.selected_node)
+            elif self.selected_edge:
+                self.delete_edge(self.selected_edge)
     
     def node_clicked(self, node):
         if self.adding_edge and self.selected_node and self.selected_node != node:
@@ -343,9 +407,11 @@ class MainWindow(QMainWindow):
             return 
 
         bidirectional = self.edge_type_selector.currentText() == "Bidirecional"
-        edge = Edge(start_node, end_node, bidirectional=bidirectional)
+        edge = Edge(start_node, end_node, self, bidirectional=bidirectional)
         self.edges.append(edge)
         self.scene.addItem(edge)
+        self.highlight_node(start_node, False)
+        self.highlight_node(end_node, False)
         self.toggle_adding_edge()
         self.update_graph()
     
@@ -393,6 +459,12 @@ class MainWindow(QMainWindow):
             for edge in edges_to_remove:
                 self.scene.removeItem(edge)
                 self.edges.remove(edge)
+            self.update_graph()
+
+    def delete_edge(self, edge):
+        if edge in self.edges:
+            self.edges.remove(edge)
+            self.scene.removeItem(edge)
             self.update_graph()
 
     def save_current_configuration(self):
