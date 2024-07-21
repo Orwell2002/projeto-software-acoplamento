@@ -1,11 +1,11 @@
 import sys
 import math
 import json
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QGraphicsScene, QGraphicsItem, QGraphicsView,
+from PyQt5.QtWidgets import (QApplication, QAction, QMainWindow, QPushButton, QGraphicsScene, QGraphicsItem, QGraphicsView,
                              QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsLineItem, QInputDialog, QFileDialog, 
                              QColorDialog, QMenu, QVBoxLayout, QHBoxLayout, QWidget, QComboBox)
 from PyQt5.QtCore import Qt, QPointF, QLineF
-from PyQt5.QtGui import QPen, QColor, QFont, QIcon, QTransform, QPainter, QPolygonF
+from PyQt5.QtGui import QPen, QColor, QFont, QIcon, QTransform, QPainter, QPolygonF, QKeySequence
 from qdarktheme import load_stylesheet
 
 import serial
@@ -211,6 +211,92 @@ class CustomGraphicsScene(QGraphicsScene):
             self.main_window.deselect_item()
         super().mousePressEvent(event)
 
+class HistoryManager:
+    def __init__(self):
+        self.undo_stack = []
+        self.redo_stack = []
+
+    def add_action(self, action):
+        self.undo_stack.append(action)
+        self.redo_stack.clear()  # Limpa o redo stack após uma nova ação
+
+    def undo(self):
+        if not self.undo_stack:
+            return
+        action = self.undo_stack.pop()
+        action.undo()
+        self.redo_stack.append(action)
+
+    def redo(self):
+        if not self.redo_stack:
+            return
+        action = self.redo_stack.pop()
+        action.redo()
+        self.undo_stack.append(action)
+
+class Action:
+    def undo(self):
+        raise NotImplementedError
+
+    def redo(self):
+        raise NotImplementedError
+
+class AddNodeAction(Action):
+    def __init__(self, node, scene, nodes):
+        self.node = node
+        self.scene = scene
+        self.nodes = nodes
+
+    def undo(self):
+        self.scene.removeItem(self.node)
+        self.nodes.remove(self.node)
+
+    def redo(self):
+        self.scene.addItem(self.node)
+        self.nodes.append(self.node)
+
+class RemoveNodeAction(Action):
+    def __init__(self, node, scene, nodes):
+        self.node = node
+        self.scene = scene
+        self.nodes = nodes
+
+    def undo(self):
+        self.scene.addItem(self.node)
+        self.nodes.append(self.node)
+
+    def redo(self):
+        self.scene.removeItem(self.node)
+        self.nodes.remove(self.node)
+
+class AddEdgeAction(Action):
+    def __init__(self, edge, scene, edges):
+        self.edge = edge
+        self.scene = scene
+        self.edges = edges
+
+    def undo(self):
+        self.scene.removeItem(self.edge)
+        self.edges.remove(self.edge)
+
+    def redo(self):
+        self.scene.addItem(self.edge)
+        self.edges.append(self.edge)
+
+class RemoveEdgeAction(Action):
+    def __init__(self, edge, scene, edges):
+        self.edge = edge
+        self.scene = scene
+        self.edges = edges
+
+    def undo(self):
+        self.scene.addItem(self.edge)
+        self.edges.append(self.edge)
+
+    def redo(self):
+        self.scene.removeItem(self.edge)
+        self.edges.remove(self.edge)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -229,10 +315,22 @@ class MainWindow(QMainWindow):
         system_menu.addAction('Configurar Porta Serial').triggered.connect(self.open_config_dialog)
         
         self.layout = QVBoxLayout(self.central_widget)
-        
+
         self.top_layout = QHBoxLayout()
         self.layout.addLayout(self.top_layout)
         
+        # Criar ações para undo e redo
+        self.undo_action = QAction('Desfazer', self)
+        self.undo_action.setShortcut(QKeySequence.Undo)
+        self.undo_action.triggered.connect(self.undo)
+
+        self.redo_action = QAction('Refazer', self)
+        self.redo_action.setShortcut(QKeySequence.Redo)
+        self.redo_action.triggered.connect(self.redo)
+
+        # Adicionar ações ao menu
+        self.add_actions_to_menus()
+
         self.add_node_button = QPushButton('Adicionar Nó', self)
         self.add_node_button.clicked.connect(self.add_node)
         self.top_layout.addWidget(self.add_node_button)
@@ -264,6 +362,7 @@ class MainWindow(QMainWindow):
         self.adding_edge = False
         self.start_node = None
         self.serial_port = None
+        self.history_manager = HistoryManager()
         
         self.view.setFocusPolicy(Qt.StrongFocus)
         self.view.keyPressEvent = self.keyPressEvent
@@ -299,6 +398,7 @@ class MainWindow(QMainWindow):
             new_node.update_text_position()
             new_node.update_frequency_text_position()
             self.update_graph()
+            self.history_manager.add_action(AddNodeAction(new_node, self.scene, self.nodes))
     
     def update_graph(self):
         for edge in self.edges:
@@ -396,7 +496,6 @@ class MainWindow(QMainWindow):
             self.add_edge_button.setChecked(False)
     
     def add_edge_to_nodes(self, start_node, end_node):
-        # Verifique se a aresta já existe para evitar duplicação
         if any(edge.start_node == start_node and edge.end_node == end_node or
                edge.start_node == end_node and edge.end_node == start_node for edge in self.edges):
             self.toggle_adding_edge()
@@ -414,6 +513,7 @@ class MainWindow(QMainWindow):
         self.highlight_node(end_node, False)
         self.toggle_adding_edge()
         self.update_graph()
+        self.history_manager.add_action(AddEdgeAction(edge, self.scene, self.edges))
     
     def set_nodes_movable(self, movable):
         for node in self.nodes:
@@ -460,12 +560,16 @@ class MainWindow(QMainWindow):
                 self.scene.removeItem(edge)
                 self.edges.remove(edge)
             self.update_graph()
+            self.history_manager.add_action(RemoveNodeAction(node, self.scene, self.nodes))
+            for edge in edges_to_remove:
+                self.history_manager.add_action(RemoveEdgeAction(edge, self.scene, self.edges))
 
     def delete_edge(self, edge):
         if edge in self.edges:
             self.edges.remove(edge)
             self.scene.removeItem(edge)
             self.update_graph()
+            self.history_manager.add_action(RemoveEdgeAction(edge, self.scene, self.edges))
 
     def save_current_configuration(self):
         filename, _ = QFileDialog.getSaveFileName(self, "Salvar Rede", "", "Network Files (*.net)")
@@ -514,6 +618,17 @@ class MainWindow(QMainWindow):
             self.scene.addItem(edge)
         
         self.update_graph()
+
+    def add_actions_to_menus(self):
+        edit_menu = self.menuBar().addMenu('&Editar')
+        edit_menu.addAction(self.undo_action)
+        edit_menu.addAction(self.redo_action)
+
+    def undo(self):
+        self.history_manager.undo()
+    
+    def redo(self):
+        self.history_manager.redo()
 
 def open_serial_connection(port, baudrate):
     try:
