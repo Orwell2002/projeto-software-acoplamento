@@ -1,209 +1,38 @@
 import sys
-import math
 import json
-from PyQt5.QtWidgets import (QApplication, QAction, QMainWindow, QPushButton, QGraphicsScene, QGraphicsItem, QGraphicsView,
-                             QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsLineItem, QInputDialog, QFileDialog, 
-                             QColorDialog, QMenu, QVBoxLayout, QHBoxLayout, QWidget, QComboBox)
-from PyQt5.QtCore import Qt, QPointF, QLineF
-from PyQt5.QtGui import QPen, QColor, QFont, QIcon, QTransform, QPainter, QPolygonF, QKeySequence
-from qdarktheme import load_stylesheet
-
 import serial
 import serial.tools.list_ports
 
-class Node(QGraphicsEllipseItem):
-    def __init__(self, x, y, id, main_window, parent=None):
-        QGraphicsEllipseItem.__init__(self, parent)
-        self.main_window = main_window
+from node import Node
+from edge import Edge
+from history_manager import HistoryManager, AddEdgeAction, AddNodeAction, RemoveEdgeAction, RemoveNodeAction
+from styles import apply_styles
 
-        self.setRect(-23, -23, 43, 43)
-        self.default_color = QColor(100, 100, 255, 150)
-        self.setBrush(self.default_color)
-        self.update_border_color()
-
-        self.setPos(x, y)
-
-        self.id = id
-        self.frequency = None
-
-        font = QFont("Arial", 14)
-        font.setBold(True)
-        self.text = QGraphicsTextItem(str(self.id), self)
-        self.text.setFont(font)
-        self.text.setDefaultTextColor(QColor(255, 255, 255))
-        self.update_text_position()
-
-        self.setFlag(QGraphicsItem.ItemIsMovable)
-        self.setAcceptHoverEvents(True)
-        self.setFlag(QGraphicsItem.ItemSendsGeometryChanges)
-
-        frequency_font = QFont("Arial", 10)
-        self.frequency_text = QGraphicsTextItem('', self)
-        self.frequency_text.setFont(frequency_font)
-        self.frequency_text.setDefaultTextColor(QColor(255, 255, 255))
-        self.update_frequency_text_position()
-    
-    def set_color(self, color):
-        self.default_color = color
-        self.setBrush(color)
-        self.update_border_color()
-
-    def update_border_color(self):
-        darker_color = self.default_color.darker(150)
-        self.setPen(QPen(darker_color, 4))
-
-    def update_text_position(self):
-        rect = self.boundingRect()
-        text_rect = self.text.boundingRect()
-        self.text.setPos(rect.center() - text_rect.center())
-
-    def update_frequency_text_position(self):
-        rect = self.boundingRect()
-        text_rect = self.frequency_text.boundingRect()
-        self.frequency_text.setPos(rect.center().x() - text_rect.width() / 2, rect.bottom() + 5)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.main_window.select_node(self)
-        super().mousePressEvent(event)
-
-    def itemChange(self, change, value):
-        if change == QGraphicsItem.ItemPositionChange:
-            self.main_window.update_graph()
-        return super().itemChange(change, value)
-
-    def contextMenuEvent(self, event):
-        menu = QMenu()
-
-        edit_frequency_action = menu.addAction(QIcon('icons/edit_frequency.svg'), "Editar Frequência")
-        edit_node_color_action = menu.addAction(QIcon('icons/edit_node_color.svg'), "Editar Cor do Nó")
-        edit_node_id_action = menu.addAction(QIcon('icons/edit_node_id.svg'), "Editar ID do Nó")
-        delete_node_action = menu.addAction(QIcon('icons/delete.svg'), "Excluir Nó")
-
-        action = menu.exec_(event.screenPos())
-        if action == edit_frequency_action:
-            self.main_window.edit_frequency(self)
-        elif action == edit_node_color_action:
-            self.main_window.edit_node_color(self)
-        elif action == edit_node_id_action:
-            self.main_window.edit_node_id(self)
-        elif action == delete_node_action:
-            self.main_window.delete_node(self)
-    
-    def set_frequency(self, frequency):
-        self.frequency = frequency
-        self.update_frequency_text()
-    
-    def update_frequency_text(self):
-        if self.frequency is not None:
-            self.frequency_text.setPlainText(f'{self.frequency:.2f} Hz')
-        else:
-            self.frequency_text.setPlainText('')
-
-class Edge(QGraphicsLineItem):
-    def __init__(self, start_node, end_node, main_window, bidirectional=False):
-        super().__init__()
-        self.main_window = main_window
-        self.start_node = start_node
-        self.end_node = end_node
-        self.bidirectional = bidirectional
-        self.setPen(QPen(QColor(255, 255, 255), 2))  # Defina a cor e largura da linha
-        self.update_position()
-    
-    def update_position(self):
-        line = QLineF(self.start_node.pos(), self.end_node.pos())
-        self.setLine(self.get_tangent_line(line, self.start_node, self.end_node))
-        self.update()
-
-    def get_tangent_line(self, line, start_node, end_node):
-        # Calcula o ponto de tangência entre o círculo e a linha
-        start_pos = start_node.pos()
-        end_pos = end_node.pos()
-
-        radius = start_node.rect().width() / 2
-        line_length = QLineF(start_pos, end_pos).length()
-        
-        if line_length == 0:
-            return QLineF(start_pos, end_pos)  # Nos casos onde os nós estão no mesmo lugar
-
-        # Normaliza o vetor direção
-        direction = (end_pos - start_pos) / line_length
-
-        # Calcula os pontos de tangência
-        tangent_start = start_pos + direction * radius
-        tangent_end = end_pos - direction * radius
-
-        return QLineF(tangent_start, tangent_end)
-
-    def paint(self, painter, option, widget):
-        super().paint(painter, option, widget)
-        if self.bidirectional:
-            return
-
-        # Obtém as posições dos nós
-        start_pos = self.start_node.pos()
-        end_pos = self.end_node.pos()
-
-        # Obtém a linha tangente entre os nós
-        tangent_line = self.get_tangent_line(QLineF(end_pos, start_pos), self.end_node, self.start_node)
-
-        # Desenha a linha
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setPen(QPen(QColor(255, 255, 255), 2))
-        painter.drawLine(tangent_line)
-
-        # Desenha a seta
-        self.draw_line_with_arrow(painter, tangent_line)
-
-    def draw_line_with_arrow(self, painter, line):
-        arrow_size = 10  # Tamanho da cabeça da seta
-        painter.setPen(QPen(QColor(255, 255, 255), 2))
-        painter.setBrush(QColor(255, 255, 255))
-
-        angle = math.atan2(-line.dy(), line.dx())
-        arrow_p1 = line.p1() + QPointF(math.sin(angle + math.pi / 3) * arrow_size,
-                                       math.cos(angle + math.pi / 3) * arrow_size)
-        arrow_p2 = line.p1() + QPointF(math.sin(angle + math.pi - math.pi / 3) * arrow_size,
-                                       math.cos(angle + math.pi - math.pi / 3) * arrow_size)
-
-        arrow_head = QPolygonF()
-        arrow_head << line.p1() << arrow_p1 << arrow_p2
-
-        painter.drawPolygon(arrow_head)
-    
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.main_window.select_edge(self)
-        super().mousePressEvent(event)
-
-    def contextMenuEvent(self, event):
-        menu = QMenu()
-
-        if self.bidirectional:
-            toggle_direction_text = "Tornar Direcional"
-            toggle_direction_icon = QIcon('icons/unidirectional_arrow.svg')
-        else:
-            toggle_direction_text = "Tornar Bidirecional"
-            toggle_direction_icon = QIcon('icons/bidirectional_arrow.svg')
-
-        toggle_direction_action = menu.addAction(toggle_direction_icon, toggle_direction_text)
-        invert_direction_action = menu.addAction(QIcon('icons/invert_direction.svg'), "Inverter Aresta")
-        delete_edge_action = menu.addAction(QIcon('icons/delete.svg'), "Excluir Aresta")
-
-        action = menu.exec_(event.screenPos())
-        if action == toggle_direction_action:
-            self.main_window.toggle_edge_direction(self)
-        elif action == delete_edge_action:
-            self.main_window.delete_edge(self)
-        elif action == invert_direction_action:
-            self.main_window.invert_edge_direction(self)
+from PyQt5.QtWidgets import (QApplication, QAction, QMainWindow, QPushButton, QGraphicsScene, QGraphicsItem, 
+                             QGraphicsView,QInputDialog, QFileDialog, QColorDialog, QVBoxLayout, QHBoxLayout, 
+                             QWidget, QComboBox)
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QPen, QColor, QIcon, QTransform, QKeySequence
 
 class CustomGraphicsScene(QGraphicsScene):
+    """
+    Cena gráfica personalizada para lidar com eventos de clique e seleção de itens.
+
+    Atributos:
+        main_window (QMainWindow): Referência para a janela principal.
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.main_window = parent
 
     def mousePressEvent(self, event):
+        """
+        Evento de clique do mouse para selecionar itens na cena.
+
+        Args:
+            event (QGraphicsSceneMouseEvent): Evento de clique do mouse.
+        """
         item = self.itemAt(event.scenePos(), QTransform())
         if isinstance(item, Edge):
             self.main_window.select_edge(item)
@@ -211,115 +40,74 @@ class CustomGraphicsScene(QGraphicsScene):
             self.main_window.deselect_item()
         super().mousePressEvent(event)
 
-class HistoryManager:
-    def __init__(self):
-        self.undo_stack = []
-        self.redo_stack = []
-
-    def add_action(self, action):
-        self.undo_stack.append(action)
-        self.redo_stack.clear()  # Limpa o redo stack após uma nova ação
-
-    def undo(self):
-        if not self.undo_stack:
-            return
-        action = self.undo_stack.pop()
-        action.undo()
-        self.redo_stack.append(action)
-
-    def redo(self):
-        if not self.redo_stack:
-            return
-        action = self.redo_stack.pop()
-        action.redo()
-        self.undo_stack.append(action)
-
-class Action:
-    def undo(self):
-        raise NotImplementedError
-
-    def redo(self):
-        raise NotImplementedError
-
-class AddNodeAction(Action):
-    def __init__(self, node, scene, nodes):
-        self.node = node
-        self.scene = scene
-        self.nodes = nodes
-
-    def undo(self):
-        self.scene.removeItem(self.node)
-        self.nodes.remove(self.node)
-
-    def redo(self):
-        self.scene.addItem(self.node)
-        self.nodes.append(self.node)
-
-class RemoveNodeAction(Action):
-    def __init__(self, node, scene, nodes):
-        self.node = node
-        self.scene = scene
-        self.nodes = nodes
-
-    def undo(self):
-        self.scene.addItem(self.node)
-        self.nodes.append(self.node)
-
-    def redo(self):
-        self.scene.removeItem(self.node)
-        self.nodes.remove(self.node)
-
-class AddEdgeAction(Action):
-    def __init__(self, edge, scene, edges):
-        self.edge = edge
-        self.scene = scene
-        self.edges = edges
-
-    def undo(self):
-        self.scene.removeItem(self.edge)
-        self.edges.remove(self.edge)
-
-    def redo(self):
-        self.scene.addItem(self.edge)
-        self.edges.append(self.edge)
-
-class RemoveEdgeAction(Action):
-    def __init__(self, edge, scene, edges):
-        self.edge = edge
-        self.scene = scene
-        self.edges = edges
-
-    def undo(self):
-        self.scene.addItem(self.edge)
-        self.edges.append(self.edge)
-
-    def redo(self):
-        self.scene.removeItem(self.edge)
-        self.edges.remove(self.edge)
-
 class MainWindow(QMainWindow):
+    """
+    Janela principal da aplicação, contendo a interface gráfica e as funcionalidades principais.
+
+    Atributos:
+        nodes (list): Lista de nós na cena.
+        edges (list): Lista de arestas na cena.
+        selected_node (Node): Nó atualmente selecionado.
+        selected_edge (Edge): Aresta atualmente selecionada.
+        node_id_counter (int): Contador para gerar IDs de nós.
+        available_ids (list): Lista de IDs disponíveis para reutilização.
+        adding_edge (bool): Indicador de adição de arestas.
+        start_node (Node): Nó de início para adição de arestas.
+        serial_port (Serial): Conexão serial.
+        history_manager (HistoryManager): Gerenciador de ações de desfazer/refazer.
+    """
+
     def __init__(self):
         super().__init__()
+        self.init_ui()
+        self.init_actions()
+        self.init_scene()
+        self.init_variables()
+
+    # Inicializa a iterface gráfica do usuário
+    def init_ui(self):
         self.setWindowTitle('Controle de Rede de Osciladores')
         self.setWindowIcon(QIcon('icons/icon_black.png'))
         self.setGeometry(100, 100, 800, 600)
-        
+
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-
-        menu = self.menuBar()
-        file_menu = menu.addMenu('&Arquivo')
-        file_menu.addAction(QIcon('icons/save.svg'), 'Salvar').triggered.connect(self.save_current_configuration)
-        file_menu.addAction(QIcon('icons/load.svg'), 'Abrir Arquivo...').triggered.connect(self.load_existing_configuration)
-        system_menu = menu.addMenu('&Sistema')
-        system_menu.addAction('Configurar Porta Serial').triggered.connect(self.open_config_dialog)
-        
         self.layout = QVBoxLayout(self.central_widget)
-
         self.top_layout = QHBoxLayout()
         self.layout.addLayout(self.top_layout)
-        
-        # Criar ações para undo e redo
+
+        self.add_node_button = QPushButton('Adicionar Nó', self)
+        self.add_node_button.clicked.connect(self.add_node)
+        self.top_layout.addWidget(self.add_node_button)
+
+        self.add_edge_button = QPushButton('Adicionar Aresta', self)
+        self.add_edge_button.setCheckable(True)
+        self.add_edge_button.clicked.connect(self.toggle_adding_edge)
+        self.top_layout.addWidget(self.add_edge_button)
+
+        self.edge_type_selector = QComboBox(self)
+        self.edge_type_selector.addItems(["Bidirecional", "Direcional"])
+        self.top_layout.addWidget(self.edge_type_selector)
+
+        self.start_button = QPushButton('Iniciar', self)
+        self.start_button.clicked.connect(self.start_experiment)
+        self.top_layout.addWidget(self.start_button)
+
+    # Inicializa as ações do menu
+    def init_actions(self):
+        menu = self.menuBar()
+
+        file_menu = menu.addMenu('&Arquivo')
+        file_menu.addAction(QIcon('icons/save.svg'), 'Salvar', self.save_current_configuration)
+        file_menu.addAction(QIcon('icons/load.svg'), 'Abrir Arquivo...', self.load_existing_configuration)
+
+        system_menu = menu.addMenu('&Sistema')
+        system_menu.addAction('Configurar Porta Serial', self.open_config_dialog)
+
+        edit_menu = menu.addMenu('&Editar')
+        edit_menu.addAction(self.undo_action)
+        edit_menu.addAction(self.redo_action)
+
         self.undo_action = QAction('Desfazer', self)
         self.undo_action.setIcon(QIcon('icons/undo.svg'))
         self.undo_action.setShortcut(QKeySequence.Undo)
@@ -330,31 +118,17 @@ class MainWindow(QMainWindow):
         self.redo_action.setShortcut(QKeySequence.Redo)
         self.redo_action.triggered.connect(self.redo)
 
-        # Adicionar ações ao menu
-        self.add_actions_to_menus()
-
-        self.add_node_button = QPushButton('Adicionar Nó', self)
-        self.add_node_button.clicked.connect(self.add_node)
-        self.top_layout.addWidget(self.add_node_button)
-        
-        self.add_edge_button = QPushButton('Adicionar Aresta', self)
-        self.add_edge_button.setCheckable(True)
-        self.add_edge_button.clicked.connect(self.toggle_adding_edge)
-        self.top_layout.addWidget(self.add_edge_button)
-        
-        self.edge_type_selector = QComboBox(self)
-        self.edge_type_selector.addItems(["Bidirecional", "Direcional"])
-        self.top_layout.addWidget(self.edge_type_selector)
-        
-        self.start_button = QPushButton('Iniciar', self)
-        self.start_button.clicked.connect(self.start_experiment)
-        self.top_layout.addWidget(self.start_button)
-        
+    # Inicializa a cena gráfica onde serão visualizados os nós e arestas do grafo
+    def init_scene(self):
         self.scene = CustomGraphicsScene(self)
         self.scene.setBackgroundBrush(QColor(30, 30, 30))
         self.view = QGraphicsView(self.scene, self)
         self.layout.addWidget(self.view)
-        
+        self.view.setFocusPolicy(Qt.StrongFocus)
+        self.view.keyPressEvent = self.keyPressEvent
+
+    # Inicializa as variáveis da aplicação
+    def init_variables(self):
         self.nodes = []
         self.edges = []
         self.selected_node = None
@@ -365,9 +139,6 @@ class MainWindow(QMainWindow):
         self.start_node = None
         self.serial_port = None
         self.history_manager = HistoryManager()
-        
-        self.view.setFocusPolicy(Qt.StrongFocus)
-        self.view.keyPressEvent = self.keyPressEvent
     
     def open_config_dialog(self):
         ports = [port.device for port in serial.tools.list_ports.comports()]
@@ -615,7 +386,7 @@ class MainWindow(QMainWindow):
         for edge_data in config['edges']:
             start_node = next(node for node in self.nodes if node.id == edge_data['start_node'])
             end_node = next(node for node in self.nodes if node.id == edge_data['end_node'])
-            edge = Edge(start_node, end_node, bidirectional=edge_data['bidirectional'])
+            edge = Edge(start_node, end_node, self, bidirectional=edge_data['bidirectional'])
             self.edges.append(edge)
             self.scene.addItem(edge)
         
@@ -649,7 +420,7 @@ def send_data_to_microcontroller(ser, data):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setStyleSheet(load_stylesheet())
+    apply_styles(app)
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
