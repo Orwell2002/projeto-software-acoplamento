@@ -321,10 +321,12 @@ class MainWindow(QMainWindow):
         
         # Criar ações para undo e redo
         self.undo_action = QAction('Desfazer', self)
+        self.undo_action.setIcon(QIcon('icons/undo.svg'))
         self.undo_action.setShortcut(QKeySequence.Undo)
         self.undo_action.triggered.connect(self.undo)
 
         self.redo_action = QAction('Refazer', self)
+        self.redo_action.setIcon(QIcon('icons/redo.svg'))
         self.redo_action.setShortcut(QKeySequence.Redo)
         self.redo_action.triggered.connect(self.redo)
 
