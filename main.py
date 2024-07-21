@@ -301,7 +301,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('Controle de Rede de Osciladores')
-        self.setWindowIcon(QIcon('icons/icon.png'))
+        self.setWindowIcon(QIcon('icons/icon-black.png'))
         self.setGeometry(100, 100, 800, 600)
         
         self.central_widget = QWidget()
