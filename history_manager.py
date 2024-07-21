@@ -173,3 +173,28 @@ class RemoveEdgeAction(Action):
         """
         self.scene.removeItem(self.edge)
         self.edges.remove(self.edge)
+
+class CompositeAction(Action):
+    """
+    Ação composta que combina várias ações em uma única ação.
+
+    Args:
+        actions (list): Lista de ações a serem combinadas.
+    """
+    
+    def __init__(self, actions):
+        self.actions = actions
+
+    def undo(self):
+        """
+        Desfaz todas as ações na ordem inversa.
+        """
+        for action in reversed(self.actions):
+            action.undo()
+
+    def redo(self):
+        """
+        Refaz todas as ações na ordem original.
+        """
+        for action in self.actions:
+            action.redo()

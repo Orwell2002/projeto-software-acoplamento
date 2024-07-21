@@ -5,7 +5,7 @@ import serial.tools.list_ports
 
 from node import Node
 from edge import Edge
-from history_manager import HistoryManager, AddEdgeAction, AddNodeAction, RemoveEdgeAction, RemoveNodeAction
+from history_manager import HistoryManager, AddEdgeAction, AddNodeAction, RemoveEdgeAction, RemoveNodeAction, CompositeAction
 from styles import apply_styles
 
 from PyQt5.QtWidgets import (QApplication, QAction, QMainWindow, QPushButton, QGraphicsScene, QGraphicsItem, 
@@ -105,8 +105,6 @@ class MainWindow(QMainWindow):
         system_menu.addAction('Configurar Porta Serial', self.open_config_dialog)
 
         edit_menu = menu.addMenu('&Editar')
-        edit_menu.addAction(self.undo_action)
-        edit_menu.addAction(self.redo_action)
 
         self.undo_action = QAction('Desfazer', self)
         self.undo_action.setIcon(QIcon('icons/undo.svg'))
@@ -117,6 +115,9 @@ class MainWindow(QMainWindow):
         self.redo_action.setIcon(QIcon('icons/redo.svg'))
         self.redo_action.setShortcut(QKeySequence.Redo)
         self.redo_action.triggered.connect(self.redo)
+
+        edit_menu.addAction(self.undo_action)
+        edit_menu.addAction(self.redo_action)
 
     # Inicializa a cena gráfica onde serão visualizados os nós e arestas do grafo
     def init_scene(self):
@@ -270,7 +271,7 @@ class MainWindow(QMainWindow):
     
     def add_edge_to_nodes(self, start_node, end_node):
         if any(edge.start_node == start_node and edge.end_node == end_node or
-               edge.start_node == end_node and edge.end_node == start_node for edge in self.edges):
+            edge.start_node == end_node and edge.end_node == start_node for edge in self.edges):
             self.toggle_adding_edge()
             return 
         
@@ -328,14 +329,18 @@ class MainWindow(QMainWindow):
             self.available_ids.append(node.id)
             self.nodes.remove(node)
             self.scene.removeItem(node)
+
             edges_to_remove = [edge for edge in self.edges if edge.start_node == node or edge.end_node == node]
+            actions = [RemoveNodeAction(node, self.scene, self.nodes)]
+            
             for edge in edges_to_remove:
                 self.scene.removeItem(edge)
                 self.edges.remove(edge)
+                actions.append(RemoveEdgeAction(edge, self.scene, self.edges))
+
+            composite_action = CompositeAction(actions)
+            self.history_manager.add_action(composite_action)
             self.update_graph()
-            self.history_manager.add_action(RemoveNodeAction(node, self.scene, self.nodes))
-            for edge in edges_to_remove:
-                self.history_manager.add_action(RemoveEdgeAction(edge, self.scene, self.edges))
 
     def delete_edge(self, edge):
         if edge in self.edges:
