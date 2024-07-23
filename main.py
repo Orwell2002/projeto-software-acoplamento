@@ -8,7 +8,7 @@ from edge import Edge
 from history_manager import HistoryManager, AddEdgeAction, AddNodeAction, RemoveEdgeAction, RemoveNodeAction, CompositeAction
 from styles import apply_styles
 
-from PyQt5.QtWidgets import (QApplication, QAction, QMainWindow, QPushButton, QGraphicsScene, QGraphicsItem, 
+from PyQt5.QtWidgets import (QApplication, QAction, QMessageBox, QMainWindow, QPushButton, QGraphicsScene, QGraphicsItem, 
                              QGraphicsView,QInputDialog, QFileDialog, QColorDialog, QVBoxLayout, QHBoxLayout, 
                              QWidget, QComboBox)
 from PyQt5.QtCore import Qt
@@ -150,12 +150,20 @@ class MainWindow(QMainWindow):
                 self.serial_port = open_serial_connection(port, baudrate)
     
     def start_experiment(self):
+        if not self.serial_port or not self.serial_port.is_open:
+            QMessageBox.critical(self, "Erro", "Nenhuma porta serial conectada corretamente.")
+            return
+        
         matrix = self.generate_coupling_matrix()
-        print("Matriz de Acoplamento:")
-        for row in matrix:
-            print(row)
-        if self.serial_port:
-            send_data_to_microcontroller(self.serial_port, str(matrix))
+        data = json.dumps(matrix)  # Serializa a matriz como string JSON
+        if self.send_data_to_microcontroller(self.serial_port, data):
+            response = self.serial_port.read_until(b"ACK\n")
+            if response.strip() == b"ACK":
+                QMessageBox.information(self, "Configuração Concluída", "A matriz de acoplamento foi enviada e recebida com sucesso.", QMessageBox.Ok)
+            else:
+                QMessageBox.critical(self, "Erro", "Falha ao receber confirmação do microcontrolador.")
+        else:
+            QMessageBox.critical(self, "Erro", "Falha ao enviar a matriz de acoplamento para o microcontrolador.")
     
     def add_node(self):
         frequency, ok = QInputDialog.getDouble(self, "Adicionar Nó", "Frequência de Oscilação:", 1.00, 0.01, 100.0, 2)
@@ -408,20 +416,58 @@ class MainWindow(QMainWindow):
     def redo(self):
         self.history_manager.redo()
 
+    def send_data_to_microcontroller(self, ser, data, chunk_size=64):
+        START_FLAG = "<START>"
+        END_FLAG = "<END>\n"
+
+        # Cálculo do tamanho disponível para os dados em cada chunk
+        data_chunk_size = chunk_size - len(START_FLAG) - len(END_FLAG)
+        
+        try:
+            ser.write(START_FLAG.encode())  # Envia a flag de início
+
+            # Envia os dados em chunks
+            for i in range(0, len(data), data_chunk_size):
+                chunk = data[i:i + data_chunk_size]
+                ser.write(chunk.encode())
+                print(chunk.encode())  # Para debug
+            
+            ser.write(END_FLAG.encode())  # Envia a flag de fim
+            return True
+        except serial.SerialException as e:
+            print(f'Erro ao enviar dados: {e}')
+            return False
+
+    def receive_confirmation(self, ser, timeout=5):
+        ser.timeout = timeout
+        try:
+            response = ser.readline().decode().strip()
+            return response
+        except serial.SerialException as e:
+            print(f'Erro ao receber confirmação: {e}')
+            return None
+
 def open_serial_connection(port, baudrate):
     try:
         ser = serial.Serial(port, baudrate)
         return ser
     except serial.SerialException as e:
         print(f'Erro ao abrir a porta serial: {e}')
+        QMessageBox.critical(None, "Erro", f"Não foi possível abrir a porta serial {port}. Verifique a conexão e tente novamente.")
         return None
 
-def send_data_to_microcontroller(ser, data):
+def send_data_to_microcontroller(ser, data, chunk_size=64):
     if ser:
         try:
-            ser.write(data.encode())
+            # Divide os dados em pedaços de tamanho chunk_size
+            for i in range(0, len(data), chunk_size - 1):
+                chunk = data[i:i + (chunk_size - 1)]
+                print(chunk + '\n')
+                ser.write(chunk.encode())
+                ser.write(b'\n')  # Adiciona uma nova linha para indicar o fim do pacote
         except serial.SerialException as e:
             print(f'Erro ao enviar dados: {e}')
+            QMessageBox.critical(None, "Erro", "Não foi possível enviar dados para o microcontrolador. Verifique a conexão e tente novamente.")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
