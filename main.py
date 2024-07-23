@@ -8,11 +8,11 @@ from edge import Edge
 from history_manager import HistoryManager, AddEdgeAction, AddNodeAction, RemoveEdgeAction, RemoveNodeAction, CompositeAction
 from styles import apply_styles
 
-from PyQt5.QtWidgets import (QApplication, QAction, QMessageBox, QMainWindow, QPushButton, QGraphicsScene, QGraphicsItem, 
-                             QGraphicsView,QInputDialog, QFileDialog, QColorDialog, QVBoxLayout, QHBoxLayout, 
-                             QWidget, QComboBox)
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPen, QColor, QIcon, QTransform, QKeySequence
+from PyQt5.QtWidgets import (QApplication, QAction, QMessageBox, QMainWindow, QPushButton, QGraphicsScene, 
+                             QGraphicsItem, QInputDialog, QFileDialog, QColorDialog, QVBoxLayout, QHBoxLayout, 
+                             QGraphicsRectItem, QWidget, QComboBox, QGraphicsView, )
+from PyQt5.QtCore import Qt, QRectF
+from PyQt5.QtGui import QPen, QColor, QIcon, QTransform, QKeySequence, QFont
 
 class CustomGraphicsScene(QGraphicsScene):
     """
@@ -21,24 +21,92 @@ class CustomGraphicsScene(QGraphicsScene):
     Atributos:
         main_window (QMainWindow): Referência para a janela principal.
     """
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.main_window = parent
+        self.selection_rect = None
+        self.selection_rect_start = None
 
     def mousePressEvent(self, event):
-        """
-        Evento de clique do mouse para selecionar itens na cena.
-
-        Args:
-            event (QGraphicsSceneMouseEvent): Evento de clique do mouse.
-        """
-        item = self.itemAt(event.scenePos(), QTransform())
-        if isinstance(item, Edge):
-            self.main_window.select_edge(item)
-        elif not isinstance(item, Node):
-            self.main_window.deselect_item()
+        if event.button() == Qt.LeftButton:
+            item = self.itemAt(event.scenePos(), QTransform())
+            if item is None:
+                self.main_window.deselect_item()
+                self.selection_rect_start = event.scenePos()
+                self.selection_rect = QGraphicsRectItem()
+                self.selection_rect.setPen(QPen(QColor(138, 180, 247, 200)))
+                self.selection_rect.setBrush(QColor(138, 180, 247, 10))
+                self.addItem(self.selection_rect)
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.selection_rect is not None:
+            current_pos = event.scenePos()
+            rect = QRectF(self.selection_rect_start, current_pos).normalized()
+            self.selection_rect.setRect(rect)
+            self.update_selection(rect)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.selection_rect is not None:
+            self.removeItem(self.selection_rect)
+            self.selection_rect = None
+            self.selection_rect_start = None
+        super().mouseReleaseEvent(event)
+
+    def update_selection(self, rect):
+        for item in self.items():
+            if isinstance(item, Node) or isinstance(item, Edge):
+                item.setSelected(rect.intersects(item.sceneBoundingRect()))
+
+class CustomGraphicsView(QGraphicsView):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setDragMode(QGraphicsView.NoDrag)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setInteractive(True)
+        self.middle_mouse_button_pressed = False
+
+    def wheelEvent(self, event):
+        factor = 1.2 if event.angleDelta().y() > 0 else 1 / 1.2
+        self.scale(factor, factor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MiddleButton:
+            self.middle_mouse_button_pressed = True
+            self.setDragMode(QGraphicsView.ScrollHandDrag)
+            self.setInteractive(False)
+            self.viewport().setCursor(Qt.ClosedHandCursor)
+            self.middle_mouse_button_pos = event.pos()
+            self.viewport().grabMouse()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.middle_mouse_button_pressed:
+            self.horizontalScrollBar().setValue(
+                self.horizontalScrollBar().value() - (event.x() - self.middle_mouse_button_pos.x())
+            )
+            self.verticalScrollBar().setValue(
+                self.verticalScrollBar().value() - (event.y() - self.middle_mouse_button_pos.y())
+            )
+            self.middle_mouse_button_pos = event.pos()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MiddleButton and self.middle_mouse_button_pressed:
+            self.middle_mouse_button_pressed = False
+            self.setDragMode(QGraphicsView.NoDrag)
+            self.setInteractive(True)
+            self.viewport().setCursor(Qt.ArrowCursor)
+            self.viewport().releaseMouse()
+        else:
+            super().mouseReleaseEvent(event)
+
+
+
 
 class MainWindow(QMainWindow):
     """
@@ -69,7 +137,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle('Controle de Rede de Osciladores')
         self.setWindowIcon(QIcon('icons/icon_black.png'))
         self.setGeometry(100, 100, 800, 600)
-
+        
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout(self.central_widget)
@@ -102,6 +170,9 @@ class MainWindow(QMainWindow):
         file_menu.addAction(QIcon('icons/load.svg'), 'Abrir Arquivo...', self.load_existing_configuration)
 
         system_menu = menu.addMenu('&Sistema')
+        self.serial_action = QAction('Nenhuma Porta COM Conectada', self)
+        self.serial_action.triggered.connect(self.toggle_serial_connection)
+        system_menu.addAction(self.serial_action)
         system_menu.addAction('Configurar Porta Serial', self.open_config_dialog)
 
         edit_menu = menu.addMenu('&Editar')
@@ -123,7 +194,7 @@ class MainWindow(QMainWindow):
     def init_scene(self):
         self.scene = CustomGraphicsScene(self)
         self.scene.setBackgroundBrush(QColor(30, 30, 30))
-        self.view = QGraphicsView(self.scene, self)
+        self.view = CustomGraphicsView(self.scene)
         self.layout.addWidget(self.view)
         self.view.setFocusPolicy(Qt.StrongFocus)
         self.view.keyPressEvent = self.keyPressEvent
@@ -148,6 +219,9 @@ class MainWindow(QMainWindow):
             baudrate, ok = QInputDialog.getInt(self, "Configuração Serial", "Digite o baudrate:", 9600, 1200, 115200, 1)
             if ok:
                 self.serial_port = open_serial_connection(port, baudrate)
+                if self.serial_port:
+                    QMessageBox.information(self, "Conectado", f"Porta serial {port} conectada com sucesso.")
+                    self.serial_action.setText(f'{port} Conectada')
     
     def start_experiment(self):
         if not self.serial_port or not self.serial_port.is_open:
@@ -446,6 +520,26 @@ class MainWindow(QMainWindow):
         except serial.SerialException as e:
             print(f'Erro ao receber confirmação: {e}')
             return None
+    
+    def disconnect_serial(self):
+        if self.serial_port and self.serial_port.is_open:
+            self.serial_port.close()
+            self.serial_port = None
+            self.serial_action.setText('Nenhuma Porta COM Conectada')
+            QMessageBox.information(self, "Desconectado", "Desconectado da porta serial com sucesso.")
+        else:
+            QMessageBox.warning(self, "Aviso", "Nenhuma porta serial está conectada.")
+
+    def toggle_serial_connection(self):
+        if self.serial_port and self.serial_port.is_open:
+            self.serial_port.close()
+            self.serial_action.setText(f'{self.serial_port.port} Desconectada')
+        elif self.serial_port and not self.serial_port.is_open:
+            self.serial_port.open()
+            self.serial_action.setText(f'{self.serial_port.port} Conectada')
+        else:
+            self.open_config_dialog()
+
 
 def open_serial_connection(port, baudrate):
     try:
@@ -455,19 +549,6 @@ def open_serial_connection(port, baudrate):
         print(f'Erro ao abrir a porta serial: {e}')
         QMessageBox.critical(None, "Erro", f"Não foi possível abrir a porta serial {port}. Verifique a conexão e tente novamente.")
         return None
-
-def send_data_to_microcontroller(ser, data, chunk_size=64):
-    if ser:
-        try:
-            # Divide os dados em pedaços de tamanho chunk_size
-            for i in range(0, len(data), chunk_size - 1):
-                chunk = data[i:i + (chunk_size - 1)]
-                print(chunk + '\n')
-                ser.write(chunk.encode())
-                ser.write(b'\n')  # Adiciona uma nova linha para indicar o fim do pacote
-        except serial.SerialException as e:
-            print(f'Erro ao enviar dados: {e}')
-            QMessageBox.critical(None, "Erro", "Não foi possível enviar dados para o microcontrolador. Verifique a conexão e tente novamente.")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
