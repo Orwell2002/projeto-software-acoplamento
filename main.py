@@ -170,10 +170,10 @@ class MainWindow(QMainWindow):
         file_menu.addAction(QIcon('icons/load.svg'), 'Abrir Arquivo...', self.load_existing_configuration)
 
         system_menu = menu.addMenu('&Sistema')
-        self.serial_action = QAction('Nenhuma Porta COM Conectada', self)
+        self.serial_action = QAction('Nenhuma COM Conectada', self)
         self.serial_action.triggered.connect(self.toggle_serial_connection)
         system_menu.addAction(self.serial_action)
-        system_menu.addAction('Configurar Porta Serial', self.open_config_dialog)
+        system_menu.addAction('Configurar Serial...', self.open_config_dialog)
 
         edit_menu = menu.addMenu('&Editar')
 
@@ -222,6 +222,7 @@ class MainWindow(QMainWindow):
                 if self.serial_port:
                     QMessageBox.information(self, "Conectado", f"Porta serial {port} conectada com sucesso.")
                     self.serial_action.setText(f'{port} Conectada')
+                    self.serial_action.setIcon(QIcon('icons/connect.svg'))
     
     def start_experiment(self):
         if not self.serial_port or not self.serial_port.is_open:
@@ -534,9 +535,11 @@ class MainWindow(QMainWindow):
         if self.serial_port and self.serial_port.is_open:
             self.serial_port.close()
             self.serial_action.setText(f'{self.serial_port.port} Desconectada')
+            self.serial_action.setIcon(QIcon('icons/disconnect.svg'))
         elif self.serial_port and not self.serial_port.is_open:
             self.serial_port.open()
             self.serial_action.setText(f'{self.serial_port.port} Conectada')
+            self.serial_action.setIcon(QIcon('icons/connect.svg'))
         else:
             self.open_config_dialog()
 
