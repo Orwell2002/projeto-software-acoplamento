@@ -1,0 +1,1 @@
+{"nodes": [{"id": 1, "x": -169.0, "y": -77.0, "frequency": 1.0, "color": "#6464ff"}, {"id": 2, "x": 10.0, "y": -219.0, "frequency": 1.0, "color": "#6464ff"}, {"id": 3, "x": 111.0, "y": -40.0, "frequency": 1.0, "color": "#6464ff"}], "edges": [{"start_node": 3, "end_node": 2, "bidirectional": true}, {"start_node": 2, "end_node": 1, "bidirectional": false}]}

@@ -7,6 +7,7 @@ from node import Node
 from edge import Edge
 from history_manager import HistoryManager, AddEdgeAction, AddNodeAction, RemoveEdgeAction, RemoveNodeAction, CompositeAction
 from styles import apply_styles
+from plot_window import PlotWindow
 
 from PyQt5.QtWidgets import (QApplication, QAction, QMessageBox, QMainWindow, QPushButton, QGraphicsScene, 
                              QGraphicsItem, QInputDialog, QFileDialog, QColorDialog, QVBoxLayout, QHBoxLayout, 
@@ -26,6 +27,7 @@ class CustomGraphicsScene(QGraphicsScene):
         self.main_window = parent
         self.selection_rect = None
         self.selection_rect_start = None
+        self.setSceneRect(-1250, -1350, 2600, 2550)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -57,7 +59,18 @@ class CustomGraphicsScene(QGraphicsScene):
     def update_selection(self, rect):
         for item in self.items():
             if isinstance(item, Node) or isinstance(item, Edge):
-                item.setSelected(rect.intersects(item.sceneBoundingRect()))
+                if rect.intersects(item.sceneBoundingRect()):
+                    item.setSelected(True)
+                    # if isinstance(item, Node):
+                    #     self.main_window.highlight_node(item, True)
+                    # elif isinstance(item, Edge):
+                    #     self.main_window.highlight_edge(item, True)
+                else:
+                    item.setSelected(False)
+                    # if isinstance(item, Node):
+                    #     self.main_window.highlight_node(item, False)
+                    # elif isinstance(item, Edge):
+                    #     self.main_window.highlight_edge(item, False)
 
 class CustomGraphicsView(QGraphicsView):
     def __init__(self, *args, **kwargs):
@@ -235,6 +248,7 @@ class MainWindow(QMainWindow):
             response = self.serial_port.read_until(b"ACK\n")
             if response.strip() == b"ACK":
                 QMessageBox.information(self, "Configuração Concluída", "A matriz de acoplamento foi enviada e recebida com sucesso.", QMessageBox.Ok)
+                self.open_plot_window()
             else:
                 QMessageBox.critical(self, "Erro", "Falha ao receber confirmação do microcontrolador.")
         else:
@@ -248,8 +262,9 @@ class MainWindow(QMainWindow):
             else:
                 node_id = self.node_id_counter
                 self.node_id_counter += 1
-            new_node = Node(100, 100, node_id, self)
+            new_node = Node(self.scene.sceneRect().center().x(), self.scene.sceneRect().center().y(), node_id, self)
             new_node.set_frequency(frequency)
+            new_node.setFlag(QGraphicsItem.ItemIsSelectable, True)
             self.scene.addItem(new_node)
             self.nodes.append(new_node)
             new_node.update_text_position()
@@ -364,6 +379,7 @@ class MainWindow(QMainWindow):
 
         bidirectional = self.edge_type_selector.currentText() == "Bidirecional"
         edge = Edge(start_node, end_node, self, bidirectional=bidirectional)
+        edge.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.edges.append(edge)
         self.scene.addItem(edge)
         self.highlight_node(start_node, False)
@@ -542,6 +558,11 @@ class MainWindow(QMainWindow):
             self.serial_action.setIcon(QIcon('icons/connect.svg'))
         else:
             self.open_config_dialog()
+
+    def open_plot_window(self):
+        num_nodes = len(self.nodes)
+        self.plot_window = PlotWindow(num_nodes)
+        self.plot_window.show()
 
 
 def open_serial_connection(port, baudrate):
