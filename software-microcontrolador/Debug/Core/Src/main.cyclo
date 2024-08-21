@@ -1,6 +1,6 @@
 ../Core/Src/main.c:65:6:Process_Buffer	5
 ../Core/Src/main.c:88:6:Process_Received_Data	1
-../Core/Src/main.c:107:5:main	3
-../Core/Src/main.c:161:6:SystemClock_Config	4
-../Core/Src/main.c:208:13:MX_GPIO_Init	1
-../Core/Src/main.c:248:6:Error_Handler	1
+../Core/Src/main.c:114:5:main	3
+../Core/Src/main.c:168:6:SystemClock_Config	4
+../Core/Src/main.c:215:13:MX_GPIO_Init	1
+../Core/Src/main.c:255:6:Error_Handler	1
