@@ -229,7 +229,7 @@ class MainWindow(QMainWindow):
         ports = [port.device for port in serial.tools.list_ports.comports()]
         port, ok = QInputDialog.getItem(self, "Configuração Serial", "Selecione a porta:", ports, 0, False)
         if ok and port:
-            baudrate, ok = QInputDialog.getInt(self, "Configuração Serial", "Digite o baudrate:", 9600, 1200, 115200, 1)
+            baudrate, ok = QInputDialog.getInt(self, "Configuração Serial", "Digite o baudrate:", 115200, 1200, 115200, 1)
             if ok:
                 self.serial_port = open_serial_connection(port, baudrate)
                 if self.serial_port:
