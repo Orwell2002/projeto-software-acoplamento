@@ -246,7 +246,7 @@ class MainWindow(QMainWindow):
         data = json.dumps(matrix)  # Serializa a matriz como string JSON
         if self.send_data_to_microcontroller(self.serial_port, data):
             response = self.serial_port.read_until(b"ACK\n")
-            if response.strip() == b"ACK":
+            if b"ACK" in response:
                 QMessageBox.information(self, "Configuração Concluída", "A matriz de acoplamento foi enviada e recebida com sucesso.", QMessageBox.Ok)
                 self.open_plot_window()
             else:
@@ -560,8 +560,17 @@ class MainWindow(QMainWindow):
             self.open_config_dialog()
 
     def open_plot_window(self):
+        if not self.serial_port or not self.serial_port.is_open:
+            QMessageBox.critical(self, "Erro", "Nenhuma porta serial conectada corretamente.")
+            return
+        
         num_nodes = len(self.nodes)
-        self.plot_window = PlotWindow(num_nodes)
+        
+        # Desconecta a serial da tela principal
+        self.serial_port.close()
+        
+        # Passa a porta serial para a janela de plotagem
+        self.plot_window = PlotWindow(num_nodes, self.serial_port.port, self.serial_port.baudrate)
         self.plot_window.show()
 
 

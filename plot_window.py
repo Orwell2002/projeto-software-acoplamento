@@ -1,17 +1,20 @@
 import sys
 import numpy as np
 import pandas as pd
+import serial
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, 
                              QSpinBox, QCheckBox, QLabel, QMessageBox, QFileDialog)
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QIcon
 import pyqtgraph as pg
-import random
+
+timerPeriod = 10
 
 class PlotWindow(QMainWindow):
-    def __init__(self, num_curves):
+    def __init__(self, num_curves, port, baudrate):
         super().__init__()
         self.num_curves = num_curves
+        self.serial_port = serial.Serial(port, baudrate, timeout=1) # Reabre a porta serial
         self.init_ui()
 
     def init_ui(self):
@@ -84,12 +87,17 @@ class PlotWindow(QMainWindow):
 
     def start_experiment(self):
         if not self.experiment_running:
+            if not self.serial_port or not self.serial_port.is_open:
+                QMessageBox.critical(self, "Erro", "Nenhuma porta serial conectada corretamente.")
+                return
+            
+            self.serial_port.reset_input_buffer()  # Limpa o buffer de entrada
             self.experiment_running = True
             self.experiment_paused = False
-            self.timer.start(100)  # Atualizar a cada 100ms
+            self.timer.start(timerPeriod)  # Atualizar a cada 100ms
         if self.experiment_paused:
             self.experiment_paused = False
-            self.timer.start(100)
+            self.timer.start(timerPeriod)
 
     def pause_experiment(self):
         if self.experiment_running and not self.experiment_paused:
@@ -97,7 +105,7 @@ class PlotWindow(QMainWindow):
             self.timer.stop()
         elif self.experiment_running and self.experiment_paused:
             self.experiment_paused = False
-            self.timer.start(100)
+            self.timer.start(timerPeriod)
 
     def stop_experiment(self):
         if self.experiment_running:
@@ -117,7 +125,7 @@ class PlotWindow(QMainWindow):
     def stop_recording(self):
         self.timer.stop()
         self.save_data_to_csv()
-        self.timer.start(100)  # Retoma o experimento após a gravação
+        self.timer.start(timerPeriod)  # Retoma o experimento após a gravação
 
     def save_data_to_csv(self):
         options = QFileDialog.Options()
@@ -131,20 +139,39 @@ class PlotWindow(QMainWindow):
 
     def update_plot(self):
         if not self.experiment_paused:
-            time = len(self.time_data) * 0.1  # Simula tempo em segundos
-            self.time_data.append(time)
-            for i, curve in enumerate(self.curves):
-                voltage = self.generate_sine_wave(time, frequency=(i + 1) * 0.5)  # Gera onda senoidal para teste
-                self.data[i].append(voltage)
-                curve.setData(self.time_data, self.data[i])
-            self.plot_widget.setXRange(max(0, time - 10), time)  # Mantém o eixo Y constante
+            try:
+                if self.serial_port.in_waiting > 0:
+                    # Read data from the serial port
+                    raw_data = self.serial_port.read(self.num_curves * 2)  # Read 2 bytes per curve
+                    time = len(self.time_data) * (timerPeriod / 1000)  # Simula tempo em segundos
+                    self.time_data.append(time)
 
-    def generate_sine_wave(self, time, frequency=1, amplitude=1):
-        return amplitude * np.sin(2 * np.pi * frequency * time)
+                    for i in range(self.num_curves):
+                        adc_value = int.from_bytes(raw_data[i*2:i*2+2], byteorder='little')
+                        voltage = self.convert_adc_to_voltage(adc_value)
+                        self.data[i].append(voltage)
+                        self.curves[i].setData(self.time_data, self.data[i])
 
+                    self.plot_widget.setXRange(max(0, time - 10), time)  # Mantém o eixo X constante
+
+            except serial.SerialException as e:
+                QMessageBox.critical(self, "Erro", f"Erro ao ler dados da porta serial: {e}")
+                self.stop_experiment()
+
+    def convert_adc_to_voltage(self, adc_value):
+        # Converte valor ADC (0-4095) para tensão (0V-3.3V ou faixa equivalente)
+        # TODO: Fazer a conversão considerando o valor real e não acondicionado (-10V/+10V)
+        return (adc_value / 4095.0) * 3.3
+
+    def closeEvent(self, event):
+        # Certifique-se de fechar a porta serial ao fechar a janela
+        if self.serial_port and self.serial_port.is_open:
+            self.serial_port.close()
+        event.accept()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = PlotWindow()
     window.show()
+    
     sys.exit(app.exec_())
