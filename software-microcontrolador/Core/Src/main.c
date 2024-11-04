@@ -36,6 +36,7 @@
 #define START_FLAG "<START>"
 #define END_FLAG "<END>"
 #define ADC_BUFFER_SIZE 8  // Buffer para 8 canais do ADC
+#define PCF8574_BASE_ADDRESS 0x40  // Endereço base do PCF8574 (A2, A1, A0 = 000)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -56,7 +57,8 @@ volatile uint8_t data_received_flag;
 volatile uint8_t full_received_flag = 0;
 volatile uint16_t full_buffer_index = 0;
 volatile uint8_t receiving_data = 0;
-
+//uint8_t pcf_output = 0;
+//uint8_t i2c_data[ADC_BUFFER_SIZE] = {0};
 uint16_t adc_buffer[ADC_BUFFER_SIZE];  // Buffer para armazenar os valores do ADC
 volatile uint8_t adc_conversion_complete = 0;
 volatile uint8_t config_complete = 0;  // Flag indicando que a configuração foi concluída
@@ -71,7 +73,7 @@ static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
-
+uint8_t usbBuffer [24];
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
@@ -84,14 +86,19 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 
 void send_adc_data_over_usb(void)
 {
-    uint8_t usb_tx_buffer[ADC_BUFFER_SIZE * 2];  // 2 bytes por canal
+    uint8_t usb_tx_buffer[ADC_BUFFER_SIZE * 3];  // 3 bytes por canal (1 byte para o ID e 2 bytes para o valor do ADC)
     for (int i = 0; i < ADC_BUFFER_SIZE; i++)
     {
-        usb_tx_buffer[i * 2] = adc_buffer[i] & 0xFF;
-        usb_tx_buffer[i * 2 + 1] = (adc_buffer[i] >> 8) & 0xFF;
+        usb_tx_buffer[i * 3] = i;  // ID do canal (0-7)
+        usbBuffer[i * 3] = i;
+        usb_tx_buffer[i * 3 + 1] = adc_buffer[i] & 0xFF;  // LSB do valor do ADC
+        usbBuffer[i * 3 + 1] = adc_buffer[i] & 0xFF;
+        usb_tx_buffer[i * 3 + 2] = (adc_buffer[i] >> 8) & 0xFF;  // MSB do valor do ADC
+        usbBuffer[i * 3 + 2] = (adc_buffer[i] >> 8) & 0xFF;
     }
     CDC_Transmit_FS(usb_tx_buffer, sizeof(usb_tx_buffer));
 }
+
 
 void Process_Buffer(uint8_t* buf, uint32_t len)
 {
@@ -118,7 +125,43 @@ void Process_Buffer(uint8_t* buf, uint32_t len)
 
 void Process_Received_Data(void)
 {
-    // Convert full_buffer to 2D array here
+	uint8_t i2c_data[ADC_BUFFER_SIZE] = {0};  // Dados para enviar aos módulos PCF8574
+
+    // Converter o full_buffer em uma matriz de acoplamento e acionar os sinais dos PCF8574
+    int row, col;
+    float matrix[ADC_BUFFER_SIZE][ADC_BUFFER_SIZE];
+    int index = 0;
+
+    // Deserializa o buffer recebido em uma matriz 8x8
+    for (row = 0; row < ADC_BUFFER_SIZE; row++)
+    {
+        for (col = 0; col < ADC_BUFFER_SIZE; col++)
+        {
+        	matrix[row][col] = (float)full_buffer[index++];
+//            matrix[row][col] = (float)full_buffer[index++] / 10;  // Assumindo que os valores foram multiplicados por 10 para evitar floats
+        }
+    }
+
+//    // Converte a matriz em comandos para os módulos PCF8574
+//    for (row = 0; row < ADC_BUFFER_SIZE; row++)
+//    {
+//    	uint8_t pcf_output = 0;
+//
+//        for (col = 0; col < ADC_BUFFER_SIZE; col++)
+//        {
+//            if (matrix[row][col] > 0)
+//            {
+//                pcf_output |= (1 << col);  // Define o bit correspondente para ligar a saída
+//            }
+//        }
+//
+//        i2c_data[0] = pcf_output;
+//
+//        // Envia o comando para o PCF8574 correspondente
+//        HAL_I2C_Master_Transmit(&hi2c1, (PCF8574_BASE_ADDRESS | (row << 1)), i2c_data, 1, HAL_MAX_DELAY);
+//    }
+
+    // Piscar LED para indicação
 	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 	HAL_Delay(10);
 	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
@@ -127,7 +170,8 @@ void Process_Received_Data(void)
 	HAL_Delay(100);
 	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 
-    // Send ACK to host
+    // Envia flag ACK para o software saber que foi configurado
+    HAL_Delay(1000);
     uint8_t ack[] = "ACK\n";
     CDC_Transmit_FS(ack, strlen((char*)ack));
 
@@ -196,12 +240,11 @@ int main(void)
 			Process_Received_Data();
 		}
 
-//	    if (config_complete && adc_conversion_complete)
-//	    {
-//	    	HAL_Delay(1000);
-//	        send_adc_data_over_usb();
-//	        adc_conversion_complete = 0;
-//	    }
+	    if (config_complete && adc_conversion_complete)
+	    {
+	        send_adc_data_over_usb();
+	        adc_conversion_complete = 0;
+	    }
 
 	}
   /* USER CODE END 3 */
@@ -298,6 +341,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
+  sConfig.Channel = ADC_CHANNEL_2;
   sConfig.Rank = ADC_REGULAR_RANK_2;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -306,6 +350,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
+  sConfig.Channel = ADC_CHANNEL_3;
   sConfig.Rank = ADC_REGULAR_RANK_3;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -314,6 +359,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
+  sConfig.Channel = ADC_CHANNEL_4;
   sConfig.Rank = ADC_REGULAR_RANK_4;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -322,6 +368,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
+  sConfig.Channel = ADC_CHANNEL_5;
   sConfig.Rank = ADC_REGULAR_RANK_5;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -330,6 +377,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
+  sConfig.Channel = ADC_CHANNEL_6;
   sConfig.Rank = ADC_REGULAR_RANK_6;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -338,6 +386,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
+  sConfig.Channel = ADC_CHANNEL_7;
   sConfig.Rank = ADC_REGULAR_RANK_7;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -346,6 +395,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
+  sConfig.Channel = ADC_CHANNEL_8;
   sConfig.Rank = ADC_REGULAR_RANK_8;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {

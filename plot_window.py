@@ -85,16 +85,32 @@ class PlotWindow(QMainWindow):
         for i, checkbox in enumerate(self.checkboxes):
             self.curves[i].setVisible(checkbox.isChecked())
 
+    # def start_experiment(self):
+    #     if not self.experiment_running:
+    #         if not self.serial_port or not self.serial_port.is_open:
+    #             QMessageBox.critical(self, "Erro", "Nenhuma porta serial conectada corretamente.")
+    #             return
+            
+    #         self.serial_port.reset_input_buffer()  # Limpa o buffer de entrada
+    #         self.experiment_running = True
+    #         self.experiment_paused = False
+    #         self.timer.start(timerPeriod)  # Atualizar a cada 100ms
+    #     if self.experiment_paused:
+    #         self.experiment_paused = False
+    #         self.timer.start(timerPeriod)
+
     def start_experiment(self):
         if not self.experiment_running:
             if not self.serial_port or not self.serial_port.is_open:
                 QMessageBox.critical(self, "Erro", "Nenhuma porta serial conectada corretamente.")
                 return
-            
+
             self.serial_port.reset_input_buffer()  # Limpa o buffer de entrada
             self.experiment_running = True
             self.experiment_paused = False
-            self.timer.start(timerPeriod)  # Atualizar a cada 100ms
+            self.timer.start(timerPeriod)  # Atualizar continuamente
+
+        # Se o experimento já está rodando e apenas pausado, basta reiniciar o timer
         if self.experiment_paused:
             self.experiment_paused = False
             self.timer.start(timerPeriod)
@@ -137,22 +153,76 @@ class PlotWindow(QMainWindow):
             df.to_csv(file_path, index=False)
             QMessageBox.information(self, "Gravação Concluída", f"Os dados foram salvos em {file_path}", QMessageBox.Ok)
 
+    # def update_plot(self):
+    #     if not self.experiment_paused:
+    #         try:
+    #             expected_bytes = self.num_curves * 3  # 3 bytes por canal (1 byte ID + 2 bytes ADC)
+    #             if self.serial_port.in_waiting >= expected_bytes:
+    #                 raw_data = self.serial_port.read(expected_bytes)
+    #                 channel_data = {i: None for i in range(self.num_curves)}  # Dicionário para armazenar dados do canal
+
+    #                 # Processa os dados em blocos de 3 bytes
+    #                 for i in range(0, len(raw_data), 3):
+    #                     channel_id = raw_data[i]  # 1º byte é o ID do canal
+    #                     if channel_id < self.num_curves:
+    #                         # Obtém os bytes para o valor ADC e converte para decimal
+    #                         lsb, msb  = raw_data[i+1], raw_data[i+2]
+    #                         adc_value = int.from_bytes([lsb, msb], byteorder='little')  # Converte os 2 bytes para um valor de 16 bits
+                                    
+    #                         # Converte cada byte para uma string binária de 8 bits
+    #                         msb_binary = f"{msb:08b}"  # Representação de 8 bits do MSB
+    #                         lsb_binary = f"{lsb:08b}"  # Representação de 8 bits do LSB
+
+    #                         # Imprime os bits e o valor decimal
+    #                         print(f"Channel ID: {channel_id}, LSB bits: {lsb_binary}, MSB bits: {msb_binary}, ADC decimal: {adc_value}")
+    #                         channel_data[channel_id] = self.convert_adc_to_voltage(adc_value)
+
+    #                 # Atualize o gráfico se todos os canais tiverem dados válidos
+    #                 if all(val is not None for val in channel_data.values()):
+    #                     time = len(self.time_data) * (timerPeriod / 1000)  # Simula tempo em segundos
+    #                     self.time_data.append(time)
+
+    #                     for i, voltage in channel_data.items():
+    #                         self.data[i].append(voltage)
+    #                         self.curves[i].setData(self.time_data, self.data[i])
+
+    #                     self.plot_widget.setXRange(max(0, time - 10), time)  # Mantém o eixo X constante
+
+    #         except serial.SerialException as e:
+    #             QMessageBox.critical(self, "Erro", f"Erro ao ler dados da porta serial: {e}")
+    #             self.stop_experiment()
+
     def update_plot(self):
-        if not self.experiment_paused:
+        if not self.experiment_paused and self.serial_port.is_open:
             try:
-                if self.serial_port.in_waiting > 0:
-                    # Read data from the serial port
-                    raw_data = self.serial_port.read(self.num_curves * 2)  # Read 2 bytes per curve
-                    time = len(self.time_data) * (timerPeriod / 1000)  # Simula tempo em segundos
-                    self.time_data.append(time)
+                raw_data = self.serial_port.read(self.serial_port.in_waiting or 1)
+                channel_data = {i: None for i in range(self.num_curves)}
 
-                    for i in range(self.num_curves):
-                        adc_value = int.from_bytes(raw_data[i*2:i*2+2], byteorder='little')
-                        voltage = self.convert_adc_to_voltage(adc_value)
-                        self.data[i].append(voltage)
-                        self.curves[i].setData(self.time_data, self.data[i])
+                # Processa os dados em blocos de 3 bytes
+                for i in range(0, len(raw_data), 3):
+                    if len(raw_data) - i < 3:
+                        break
 
-                    self.plot_widget.setXRange(max(0, time - 10), time)  # Mantém o eixo X constante
+                    channel_id = raw_data[i]
+                    if channel_id < self.num_curves:
+                        lsb, msb = raw_data[i + 1], raw_data[i + 2]
+                        adc_value = int.from_bytes([lsb, msb], byteorder='little')
+                        channel_data[channel_id] = self.convert_adc_to_voltage(adc_value)
+
+                # Adiciona dados sincronizados
+                time = len(self.time_data) * (timerPeriod / 1000)
+                self.time_data.append(time)
+
+                for i in range(self.num_curves):
+                    if channel_data[i] is not None:
+                        self.data[i].append(channel_data[i])
+                    else:
+                        # Repete o último valor para manter o comprimento igual
+                        self.data[i].append(self.data[i][-1] if self.data[i] else 0)
+                    self.curves[i].setData(self.time_data, self.data[i])
+
+                # Ajuste do eixo X
+                self.plot_widget.setXRange(max(0, time - 10), time)
 
             except serial.SerialException as e:
                 QMessageBox.critical(self, "Erro", f"Erro ao ler dados da porta serial: {e}")
