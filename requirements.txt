@@ -1,2 +1,6 @@
 pyqt5
 pyserial
+pyqtdarktheme
+numpy
+pandas
+pyqtgraph
