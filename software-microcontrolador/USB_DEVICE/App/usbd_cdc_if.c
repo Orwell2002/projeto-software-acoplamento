@@ -31,8 +31,9 @@
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
-extern uint8_t buffer[64]; // Buffer para armazenar dados recebidos
-extern volatile uint8_t data_received_flag;
+extern uint8_t buffer[64];  // Buffer para armazenar dados recebidos
+extern volatile uint8_t receivingData;  // Flag para indicar recebimento de dados
+extern void Process_Byte(uint8_t byte);  // Função de processamento definida anteriormente
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -260,17 +261,15 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
-	  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
-	  USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
+  USBD_CDC_ReceivePacket(&hUsbDeviceFS);
 
-	  memset(buffer, '\0', sizeof(buffer));  // clear the buffer
-	  uint8_t len = (uint8_t)*Len;
-	  memcpy(buffer, Buf, len);  // copy the data to the buffer
-	  memset(Buf, '\0', len);   // clear the Buf also
+  // Processa cada byte recebido
+  for (uint32_t i = 0; i < *Len; i++) {
+	  Process_Byte(Buf[i]);
+  }
 
-	  data_received_flag = 1;  // Set flag to indicate data received
-
-	  return (USBD_OK);
+  return (USBD_OK);
   /* USER CODE END 6 */
 }
 
