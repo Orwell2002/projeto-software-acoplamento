@@ -33,9 +33,10 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define START_FLAG "<START>"
-#define END_FLAG "<END>"
+#define START_MARKER '<'
+#define END_MARKER '>'
 #define ADC_BUFFER_SIZE 8  // Buffer para 8 canais do ADC
+#define PCF8574_BASE_ADDRESS 0x40  // Endereço base do PCF8574 (A2, A1, A0 = 000)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -53,13 +54,14 @@ I2C_HandleTypeDef hi2c1;
 uint8_t buffer[64];
 uint8_t full_buffer[1024];
 volatile uint8_t data_received_flag;
-volatile uint8_t full_received_flag = 0;
+volatile uint8_t dataComplete = 0;
 volatile uint16_t full_buffer_index = 0;
-volatile uint8_t receiving_data = 0;
-
+volatile uint8_t receivingData = 0;
 uint16_t adc_buffer[ADC_BUFFER_SIZE];  // Buffer para armazenar os valores do ADC
 volatile uint8_t adc_conversion_complete = 0;
 volatile uint8_t config_complete = 0;  // Flag indicando que a configuração foi concluída
+float matrix[ADC_BUFFER_SIZE][ADC_BUFFER_SIZE];
+uint8_t matrixSize = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -82,43 +84,74 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
     }
 }
 
-void send_adc_data_over_usb(void)
+HAL_StatusTypeDef I2C_IsDeviceReady(void)
 {
-    uint8_t usb_tx_buffer[ADC_BUFFER_SIZE * 2];  // 2 bytes por canal
+    return HAL_I2C_IsDeviceReady(&hi2c1, PCF8574_BASE_ADDRESS, 3, HAL_MAX_DELAY);
+}
+
+void Send_ADC_USB(void)
+{
+    uint8_t usb_tx_buffer[ADC_BUFFER_SIZE * 3];  // 3 bytes por canal (1 byte para o ID e 2 bytes para o valor do ADC)
     for (int i = 0; i < ADC_BUFFER_SIZE; i++)
     {
-        usb_tx_buffer[i * 2] = adc_buffer[i] & 0xFF;
-        usb_tx_buffer[i * 2 + 1] = (adc_buffer[i] >> 8) & 0xFF;
+        usb_tx_buffer[i * 3] = i;  // ID do canal (0-7)
+        usb_tx_buffer[i * 3 + 1] = adc_buffer[i] & 0xFF;  // LSB do valor do ADC
+        usb_tx_buffer[i * 3 + 2] = (adc_buffer[i] >> 8) & 0xFF;  // MSB do valor do ADC
     }
     CDC_Transmit_FS(usb_tx_buffer, sizeof(usb_tx_buffer));
 }
 
-void Process_Buffer(uint8_t* buf, uint32_t len)
+// Função para processar um byte recebido
+void Process_Byte(uint8_t byte)
 {
-    for (uint32_t i = 0; i < len; i++)
-    {
-        if (strncmp((char*)&buf[i], START_FLAG, strlen(START_FLAG)) == 0)
-        {
-            receiving_data = 1;
-            full_buffer_index = 0;
-            i += strlen(START_FLAG) - 1;
-        }
-        else if (strncmp((char*)&buf[i], END_FLAG, strlen(END_FLAG)) == 0)
-        {
-            receiving_data = 0;
-            full_received_flag = 1;
-            break;
-        }
-        else if (receiving_data)
-        {
-            full_buffer[full_buffer_index++] = buf[i];
+    static uint8_t row = 0;
+    static uint8_t col = 0;
+
+    if (byte == START_MARKER) {
+        row = 0;
+        col = 0;
+        receivingData = 1;
+        return;
+    }
+
+    if (byte == END_MARKER) {
+        receivingData = 0;
+        dataComplete = 1;
+        matrixSize = row;
+        return;
+    }
+
+    if (receivingData) {
+        if (byte == '1') {
+            matrix[row][col] = 1;
+        } else if (byte == '0') {
+            matrix[row][col] = 0;
+        } else if (byte == ',') {
+            col++;
+        } else if (byte == ';') {
+            row++;
+            col = 0;
         }
     }
 }
 
-void Process_Received_Data(void)
-{
-    // Convert full_buffer to 2D array here
+// Função para atualizar as saídas I2C baseada na matriz
+void Update_I2C_Outputs(void) {
+    for (uint8_t i = 0; i < matrixSize; i++) {
+        uint8_t outputByte = 0;
+
+        // Converte cada linha da matriz em um byte para o PCF8574
+        for (uint8_t j = 0; j < matrixSize; j++) {
+            if (matrix[i][j]) {
+                outputByte |= (1 << j);
+            }
+        }
+
+        // Envia o byte para o PCF8574 correspondente
+        HAL_I2C_Master_Transmit(&hi2c1, PCF8574_BASE_ADDRESS + i, &outputByte, 1, HAL_MAX_DELAY);
+    }
+
+    // Piscar LED para indicação
 	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 	HAL_Delay(10);
 	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
@@ -127,18 +160,9 @@ void Process_Received_Data(void)
 	HAL_Delay(100);
 	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 
-    // Send ACK to host
+    // Envia confirmação pela USB
     uint8_t ack[] = "ACK\n";
-    CDC_Transmit_FS(ack, strlen((char*)ack));
-
-    // Indicar que a configuração foi concluída
-    HAL_Delay(1000);
-    config_complete = 1;
-
-    // Clear the buffer
-    memset(full_buffer, 0, sizeof(full_buffer));
-    full_buffer_index = 0;
-    full_received_flag = 0;
+    CDC_Transmit_FS(ack, 5);
 }
 /* USER CODE END 0 */
 
@@ -175,6 +199,20 @@ int main(void)
   MX_ADC1_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+  // Pequeno delay para estabilização do I2C
+  HAL_Delay(100);
+
+  // Verifica se o PCF8574 está respondendo
+  if (I2C_IsDeviceReady() != HAL_OK)
+  {
+      // Dispositivo não encontrado - piscar LED de erro
+      while(I2C_IsDeviceReady() != HAL_OK)
+      {
+          HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+          HAL_Delay(100);
+      }
+  }
+
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, ADC_BUFFER_SIZE);
   /* USER CODE END 2 */
 
@@ -185,23 +223,17 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-		if (data_received_flag)
-		{
-			Process_Buffer(buffer, strlen((char*)buffer));
-			data_received_flag = 0;
-		}
+	    if (dataComplete) {
+	    	Update_I2C_Outputs();
+	        dataComplete = 0;
+	        config_complete = 1;
+	    }
 
-		if (full_received_flag)
-		{
-			Process_Received_Data();
-		}
-
-//	    if (config_complete && adc_conversion_complete)
-//	    {
-//	    	HAL_Delay(1000);
-//	        send_adc_data_over_usb();
-//	        adc_conversion_complete = 0;
-//	    }
+	    if (config_complete && adc_conversion_complete)
+	    {
+	        Send_ADC_USB();
+	        adc_conversion_complete = 0;
+	    }
 
 	}
   /* USER CODE END 3 */
@@ -298,6 +330,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
+  sConfig.Channel = ADC_CHANNEL_2;
   sConfig.Rank = ADC_REGULAR_RANK_2;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -306,6 +339,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
+  sConfig.Channel = ADC_CHANNEL_3;
   sConfig.Rank = ADC_REGULAR_RANK_3;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -314,6 +348,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
+  sConfig.Channel = ADC_CHANNEL_4;
   sConfig.Rank = ADC_REGULAR_RANK_4;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -322,6 +357,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
+  sConfig.Channel = ADC_CHANNEL_5;
   sConfig.Rank = ADC_REGULAR_RANK_5;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -330,6 +366,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
+  sConfig.Channel = ADC_CHANNEL_6;
   sConfig.Rank = ADC_REGULAR_RANK_6;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -338,6 +375,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
+  sConfig.Channel = ADC_CHANNEL_7;
   sConfig.Rank = ADC_REGULAR_RANK_7;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -346,6 +384,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
+  sConfig.Channel = ADC_CHANNEL_8;
   sConfig.Rank = ADC_REGULAR_RANK_8;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
