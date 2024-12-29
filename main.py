@@ -243,8 +243,7 @@ class MainWindow(QMainWindow):
             return
         
         matrix = self.generate_coupling_matrix()
-        data = json.dumps(matrix)  # Serializa a matriz como string JSON
-        if self.send_data_to_microcontroller(self.serial_port, data):
+        if self.send_data_to_microcontroller(matrix):
             response = self.serial_port.read_until(b"ACK\n")
             if b"ACK" in response:
                 QMessageBox.information(self, "Configuração Concluída", "A matriz de acoplamento foi enviada e recebida com sucesso.", QMessageBox.Ok)
@@ -507,23 +506,23 @@ class MainWindow(QMainWindow):
     def redo(self):
         self.history_manager.redo()
 
-    def send_data_to_microcontroller(self, ser, data, chunk_size=64):
-        START_FLAG = "<START>"
-        END_FLAG = "<END>\n"
-
-        # Cálculo do tamanho disponível para os dados em cada chunk
-        data_chunk_size = chunk_size - len(START_FLAG) - len(END_FLAG)
+    def send_data_to_microcontroller(self, matrix):
+        """
+        Envia a matriz de adjacência pela serial em formato simples e eficiente.
+        Formato: <0,1,0;1,0,1;0,1,0>
+        """
+        # Converte a matriz em string
+        matrix_str = '<'
+        for i, row in enumerate(matrix):
+            matrix_str += ','.join(str(int(val)) for val in row)
+            if i < len(matrix) - 1:
+                matrix_str += ';'
+        matrix_str += '>'
         
+        # Envia pela serial
         try:
-            ser.write(START_FLAG.encode())  # Envia a flag de início
-
-            # Envia os dados em chunks
-            for i in range(0, len(data), data_chunk_size):
-                chunk = data[i:i + data_chunk_size]
-                ser.write(chunk.encode())
-                print(chunk.encode())  # Para debug
-            
-            ser.write(END_FLAG.encode())  # Envia a flag de fim
+            self.serial_port.write(matrix_str.encode())
+            print(matrix_str.encode())
             return True
         except serial.SerialException as e:
             print(f'Erro ao enviar dados: {e}')
