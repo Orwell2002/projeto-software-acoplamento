@@ -53,9 +53,7 @@ I2C_HandleTypeDef hi2c1;
 /* USER CODE BEGIN PV */
 uint8_t buffer[64];
 uint8_t full_buffer[1024];
-volatile uint8_t data_received_flag;
 volatile uint8_t dataComplete = 0;
-volatile uint16_t full_buffer_index = 0;
 volatile uint8_t receivingData = 0;
 uint16_t adc_buffer[ADC_BUFFER_SIZE];  // Buffer para armazenar os valores do ADC
 volatile uint8_t adc_conversion_complete = 0;
@@ -76,11 +74,21 @@ static void MX_I2C1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
+
+// Função para resetar todos os PCF8574
+void Reset_All_PCF8574(void)
 {
-    if (hadc->Instance == ADC1)
+    uint8_t resetValue = 0x00;  // Desligar todos os LEDs
+    for (uint8_t i = 0; i < ADC_BUFFER_SIZE; i++)
     {
-        adc_conversion_complete = 1;  // Flag para indicar que a conversão terminou
+        HAL_StatusTypeDef status = HAL_I2C_Master_Transmit(&hi2c1, PCF8574_BASE_ADDRESS + i, &resetValue, 1, HAL_MAX_DELAY);
+        if (status != HAL_OK)
+        {
+            // Opcional: Adicione um log ou tratamento de erro
+            HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+            HAL_Delay(10);
+            HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+        }
     }
 }
 
@@ -199,6 +207,7 @@ int main(void)
   MX_ADC1_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+
   // Pequeno delay para estabilização do I2C
   HAL_Delay(100);
 
@@ -213,7 +222,12 @@ int main(void)
       }
   }
 
+  // Reseta todos os PCF8574 para desligar LEDs
+  Reset_All_PCF8574();
+
+  // Inicialização do ADC
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, ADC_BUFFER_SIZE);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
