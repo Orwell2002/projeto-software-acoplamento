@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "usbd_cdc_if.h"
 #include "string.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -92,11 +93,39 @@ void Reset_All_PCF8574(void)
     }
 }
 
-HAL_StatusTypeDef I2C_IsDeviceReady(void)
-{
-    return HAL_I2C_IsDeviceReady(&hi2c1, PCF8574_BASE_ADDRESS, 3, HAL_MAX_DELAY);
+// Função para resetar matriz de adjascencia antes de receber nova
+void Reset_Matrix(void) {
+    for(uint8_t i = 0; i < ADC_BUFFER_SIZE; i++) {
+        for(uint8_t j = 0; j < ADC_BUFFER_SIZE; j++) {
+            matrix[i][j] = 0;
+        }
+    }
 }
 
+// Função para imprimir matriz na serial (usada no debug)
+void Print_Matrix_USB(void) {
+    char line_buffer[128]; // Buffer para armazenar uma linha da matriz
+    CDC_Transmit_FS((uint8_t *)"\n", 1); // Linha vazia para separação
+    for (uint8_t i = 0; i < matrixSize; i++) {
+        int pos = 0; // Posicionamento no buffer
+        for (uint8_t j = 0; j < matrixSize; j++) {
+            pos += sprintf(&line_buffer[pos], "%d ", (int)matrix[i][j]); // Concatena valores na linha
+        }
+        line_buffer[pos++] = '\n'; // Adiciona quebra de linha
+        line_buffer[pos] = '\0';   // Finaliza a string
+        CDC_Transmit_FS((uint8_t *)line_buffer, strlen(line_buffer)); // Envia a linha via USB
+        HAL_Delay(50); // Pequeno delay para evitar sobrecarga de dados no Hercules
+    }
+    CDC_Transmit_FS((uint8_t *)"\n", 1); // Linha vazia para separação
+}
+
+// Verifica se I2C está pronto
+HAL_StatusTypeDef I2C_IsDeviceReady(uint8_t i)
+{
+    return HAL_I2C_IsDeviceReady(&hi2c1, PCF8574_BASE_ADDRESS + i, 3, HAL_MAX_DELAY);
+}
+
+// Envia dados do ADC pela serial
 void Send_ADC_USB(void)
 {
     uint8_t usb_tx_buffer[ADC_BUFFER_SIZE * 3];  // 3 bytes por canal (1 byte para o ID e 2 bytes para o valor do ADC)
@@ -116,6 +145,7 @@ void Process_Byte(uint8_t byte)
     static uint8_t col = 0;
 
     if (byte == START_MARKER) {
+    	Reset_Matrix();
         row = 0;
         col = 0;
         receivingData = 1;
@@ -125,7 +155,7 @@ void Process_Byte(uint8_t byte)
     if (byte == END_MARKER) {
         receivingData = 0;
         dataComplete = 1;
-        matrixSize = row;
+        matrixSize = row + 1;	 // Adiciona +1 pois a última linha também conta
         return;
     }
 
@@ -145,6 +175,7 @@ void Process_Byte(uint8_t byte)
 
 // Função para atualizar as saídas I2C baseada na matriz
 void Update_I2C_Outputs(void) {
+	Print_Matrix_USB(); // Chama a função para imprimir a matriz na serial
     for (uint8_t i = 0; i < matrixSize; i++) {
         uint8_t outputByte = 0;
 
@@ -157,11 +188,13 @@ void Update_I2C_Outputs(void) {
 
         // Envia o byte para o PCF8574 correspondente
         HAL_I2C_Master_Transmit(&hi2c1, PCF8574_BASE_ADDRESS + i, &outputByte, 1, HAL_MAX_DELAY);
+//        HAL_I2C_Master_Transmit(&hi2c1, PCF8574_BASE_ADDRESS, &outputByte, 1, HAL_MAX_DELAY);
+//        HAL_Delay(3000);
     }
 
     // Piscar LED para indicação
 	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-	HAL_Delay(10);
+	HAL_Delay(50);
 	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 	HAL_Delay(100);
 	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
@@ -212,10 +245,10 @@ int main(void)
   HAL_Delay(100);
 
   // Verifica se o PCF8574 está respondendo
-  if (I2C_IsDeviceReady() != HAL_OK)
+  if (I2C_IsDeviceReady(0) != HAL_OK)
   {
       // Dispositivo não encontrado - piscar LED de erro
-      while(I2C_IsDeviceReady() != HAL_OK)
+      while(I2C_IsDeviceReady(0) != HAL_OK)
       {
           HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
           HAL_Delay(100);
@@ -243,11 +276,11 @@ int main(void)
 	        config_complete = 1;
 	    }
 
-	    if (config_complete && adc_conversion_complete)
-	    {
-	        Send_ADC_USB();
-	        adc_conversion_complete = 0;
-	    }
+//	    if (config_complete && adc_conversion_complete)
+//	    {
+//	        Send_ADC_USB();
+//	        adc_conversion_complete = 0;
+//	    }
 
 	}
   /* USER CODE END 3 */
