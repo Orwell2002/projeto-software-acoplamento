@@ -188,8 +188,6 @@ void Update_I2C_Outputs(void) {
 
         // Envia o byte para o PCF8574 correspondente
         HAL_I2C_Master_Transmit(&hi2c1, PCF8574_BASE_ADDRESS + i, &outputByte, 1, HAL_MAX_DELAY);
-//        HAL_I2C_Master_Transmit(&hi2c1, PCF8574_BASE_ADDRESS, &outputByte, 1, HAL_MAX_DELAY);
-//        HAL_Delay(3000);
     }
 
     // Piscar LED para indicação
@@ -276,11 +274,11 @@ int main(void)
 	        config_complete = 1;
 	    }
 
-//	    if (config_complete && adc_conversion_complete)
-//	    {
-//	        Send_ADC_USB();
-//	        adc_conversion_complete = 0;
-//	    }
+	    if (config_complete && adc_conversion_complete)
+	    {
+	        Send_ADC_USB();
+	        adc_conversion_complete = 0;
+	    }
 
 	}
   /* USER CODE END 3 */
