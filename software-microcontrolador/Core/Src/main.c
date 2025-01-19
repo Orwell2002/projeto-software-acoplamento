@@ -119,6 +119,14 @@ void Print_Matrix_USB(void) {
     CDC_Transmit_FS((uint8_t *)"\n", 1); // Linha vazia para separação
 }
 
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
+{
+    if (hadc->Instance == ADC1)
+    {
+        adc_conversion_complete = 1;  // Flag para indicar que a conversão terminou
+    }
+}
+
 // Verifica se I2C está pronto
 HAL_StatusTypeDef I2C_IsDeviceReady(uint8_t i)
 {
@@ -243,15 +251,15 @@ int main(void)
   HAL_Delay(100);
 
   // Verifica se o PCF8574 está respondendo
-  if (I2C_IsDeviceReady(0) != HAL_OK)
-  {
-      // Dispositivo não encontrado - piscar LED de erro
-      while(I2C_IsDeviceReady(0) != HAL_OK)
-      {
-          HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-          HAL_Delay(100);
-      }
-  }
+//  if (I2C_IsDeviceReady(0) != HAL_OK)
+//  {
+//      // Dispositivo não encontrado - piscar LED de erro
+//      while(I2C_IsDeviceReady(0) != HAL_OK)
+//      {
+//          HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+//          HAL_Delay(100);
+//      }
+//  }
 
   // Reseta todos os PCF8574 para desligar LEDs
   Reset_All_PCF8574();
