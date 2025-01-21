@@ -56,6 +56,12 @@ class PlotWindow(QMainWindow):
         self.top_layout.addWidget(self.record_button)
         
         self.plot_widget = pg.PlotWidget()
+        self.plot_widget.showGrid(x=True, y=True)
+        self.plot_widget.setLabel('left', 'Tensão', units='V')
+        self.plot_widget.setLabel('bottom', 'Tempo', units='s')
+        self.plot_widget.setDownsampling(auto=True, mode='peak')
+        self.plot_widget.setClipToView(True)
+        self.plot_widget.setAutoPan(x=None, y=None)
         self.layout.addWidget(self.plot_widget)
         
         self.curves = []
