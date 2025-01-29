@@ -34,10 +34,16 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define START_MARKER '<'
-#define END_MARKER '>'
-#define ADC_BUFFER_SIZE 8  // Buffer para 8 canais do ADC
-#define PCF8574_BASE_ADDRESS 0x40  // Endereço base do PCF8574 (A2, A1, A0 = 000)
+#define START_MARKER '<'			// Marcador de inicio de matriz
+#define END_MARKER '>'				// Marcador de fim de matriz
+#define MODE_MATRIX 0				// Definir 0 como modo de operação para configuração de matrizes
+#define MODE_FREQUENCY 1			// Definir 1 como modo de operação para ajuste de frequência
+#define START_FREQ_CMD 0xF0    		// Comando para iniciar modo de frequência
+#define STOP_FREQ_CMD 0xF1     		// Comando para parar modo de frequência
+#define ADC_BUFFER_SIZE 8  			// Buffer para 8 canais do ADC
+#define FREQ_BUFFER_SIZE 10			// Buffer frequência para cálculo da média móvel
+#define FREQ_MULTIPLIER 100  		// Para manter 2 casas decimais
+#define PCF8574_BASE_ADDRESS 0x40  	// Endereço base do PCF8574 (A2, A1, A0 = 000)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -47,20 +53,33 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+ADC_HandleTypeDef hadc2;
 DMA_HandleTypeDef hdma_adc1;
 
 I2C_HandleTypeDef hi2c1;
 
+TIM_HandleTypeDef htim3;
+
 /* USER CODE BEGIN PV */
-uint8_t buffer[64];
-uint8_t full_buffer[1024];
+// Variáveis da mediçào do sinal
+uint32_t last_timestamp = 0;
 volatile uint8_t dataComplete = 0;
 volatile uint8_t receivingData = 0;
 uint16_t adc_buffer[ADC_BUFFER_SIZE];  // Buffer para armazenar os valores do ADC
 volatile uint8_t adc_conversion_complete = 0;
 volatile uint8_t config_complete = 0;  // Flag indicando que a configuração foi concluída
+
+// Variávies do acoplamento de rede
 float matrix[ADC_BUFFER_SIZE][ADC_BUFFER_SIZE];
 uint8_t matrixSize = 0;
+
+// Variáveis da medição de frequência
+volatile uint8_t operating_mode = MODE_MATRIX;
+volatile uint32_t last_edge_time = 0;
+volatile uint32_t current_period = 0;
+volatile uint8_t edge_detected = 0;
+float frequency_buffer[FREQ_BUFFER_SIZE];
+uint8_t freq_buffer_index = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -69,6 +88,8 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_I2C1_Init(void);
+static void MX_ADC2_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -119,14 +140,6 @@ void Print_Matrix_USB(void) {
     CDC_Transmit_FS((uint8_t *)"\n", 1); // Linha vazia para separação
 }
 
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
-{
-    if (hadc->Instance == ADC1)
-    {
-        adc_conversion_complete = 1;  // Flag para indicar que a conversão terminou
-    }
-}
-
 // Verifica se I2C está pronto
 HAL_StatusTypeDef I2C_IsDeviceReady(uint8_t i)
 {
@@ -136,14 +149,32 @@ HAL_StatusTypeDef I2C_IsDeviceReady(uint8_t i)
 // Envia dados do ADC pela serial
 void Send_ADC_USB(void)
 {
-    uint8_t usb_tx_buffer[ADC_BUFFER_SIZE * 3];  // 3 bytes por canal (1 byte para o ID e 2 bytes para o valor do ADC)
+    uint32_t current_timestamp = HAL_GetTick();
+    uint32_t delta_time = current_timestamp - last_timestamp;
+
+    // Tamanho do buffer: ADC (8 canais * 3 bytes) + delta_time (4 bytes)
+    uint8_t usb_tx_buffer[ADC_BUFFER_SIZE * 3 + 4];
+
+    // Adiciona os dados dos canais ADC
     for (int i = 0; i < ADC_BUFFER_SIZE; i++)
     {
         usb_tx_buffer[i * 3] = i;  // ID do canal (0-7)
         usb_tx_buffer[i * 3 + 1] = adc_buffer[i] & 0xFF;  // LSB do valor do ADC
         usb_tx_buffer[i * 3 + 2] = (adc_buffer[i] >> 8) & 0xFF;  // MSB do valor do ADC
     }
+
+    // Adiciona o delta_time nos últimos 4 bytes
+    usb_tx_buffer[ADC_BUFFER_SIZE * 3] = delta_time & 0xFF;
+    usb_tx_buffer[ADC_BUFFER_SIZE * 3 + 1] = (delta_time >> 8) & 0xFF;
+    usb_tx_buffer[ADC_BUFFER_SIZE * 3 + 2] = (delta_time >> 16) & 0xFF;
+    usb_tx_buffer[ADC_BUFFER_SIZE * 3 + 3] = (delta_time >> 24) & 0xFF;
+
+    // Envia o pacote via USB
     CDC_Transmit_FS(usb_tx_buffer, sizeof(usb_tx_buffer));
+
+    // Atualiza o timestamp do último envio
+    last_timestamp = current_timestamp;
+    HAL_Delay(10);
 }
 
 // Função para processar um byte recebido
@@ -152,33 +183,68 @@ void Process_Byte(uint8_t byte)
     static uint8_t row = 0;
     static uint8_t col = 0;
 
-    if (byte == START_MARKER) {
-    	Reset_Matrix();
-        row = 0;
-        col = 0;
-        receivingData = 1;
+    // Verificar comandos de modo primeiro
+    if (byte == START_FREQ_CMD) {
+        operating_mode = MODE_FREQUENCY;
+        // Iniciar timer e ADC2 para medição de frequência
+        HAL_TIM_Base_Start(&htim3);
+        HAL_ADC_Start_IT(&hadc2);
+        // Enviar confirmação
+        uint8_t msg[] = "Starting frequency measurement mode\r\n";
+        CDC_Transmit_FS(msg, strlen((char*)msg));
+        return;
+    }
+    else if (byte == STOP_FREQ_CMD) {
+        operating_mode = MODE_MATRIX;
+        // Parar timer e ADC2
+        HAL_TIM_Base_Stop(&htim3);
+        HAL_ADC_Stop_IT(&hadc2);
+        // Enviar confirmação
+        uint8_t msg[] = "Stopping frequency measurement mode\r\n";
+        CDC_Transmit_FS(msg, strlen((char*)msg));
         return;
     }
 
-    if (byte == END_MARKER) {
-        receivingData = 0;
-        dataComplete = 1;
-        matrixSize = row + 1;	 // Adiciona +1 pois a última linha também conta
-        return;
-    }
-
-    if (receivingData) {
-        if (byte == '1') {
-            matrix[row][col] = 1;
-        } else if (byte == '0') {
-            matrix[row][col] = 0;
-        } else if (byte == ',') {
-            col++;
-        } else if (byte == ';') {
-            row++;
+    // Processamento normal da matriz se estiver no modo matriz
+    if (operating_mode == MODE_MATRIX) {
+        if (byte == START_MARKER) {
+            Reset_Matrix();
+            row = 0;
             col = 0;
+            receivingData = 1;
+            return;
+        }
+
+        if (byte == END_MARKER) {
+            receivingData = 0;
+            dataComplete = 1;
+            matrixSize = row + 1;
+            return;
+        }
+
+        if (receivingData) {
+            if (byte == '1') {
+                matrix[row][col] = 1;
+            } else if (byte == '0') {
+                matrix[row][col] = 0;
+            } else if (byte == ',') {
+                col++;
+            } else if (byte == ';') {
+                row++;
+                col = 0;
+            }
         }
     }
+}
+
+// Função para cálculo de média móvel da frequência
+float Calculate_Average_Frequency(void)
+{
+    float sum = 0;
+    for(uint8_t i = 0; i < FREQ_BUFFER_SIZE; i++) {
+        sum += frequency_buffer[i];
+    }
+    return sum / FREQ_BUFFER_SIZE;
 }
 
 // Função para atualizar as saídas I2C baseada na matriz
@@ -210,6 +276,54 @@ void Update_I2C_Outputs(void) {
     // Envia confirmação pela USB
     uint8_t ack[] = "ACK\n";
     CDC_Transmit_FS(ack, 5);
+}
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
+{
+    if (hadc->Instance == ADC1)
+    {
+        adc_conversion_complete = 1;
+    }
+    else if (hadc->Instance == ADC2 && operating_mode == MODE_FREQUENCY)
+    {
+        static uint16_t last_value = 0;
+        uint16_t current_value = HAL_ADC_GetValue(hadc);
+        uint32_t current_time = HAL_GetTick();
+
+//        // Debug prints
+//        char debug_str[50];
+//        sprintf(debug_str, "ADC2 Value: %d\r\n", current_value);
+//        CDC_Transmit_FS((uint8_t*)debug_str, strlen(debug_str));
+
+        // Detectar borda de subida (pode ser ajustado conforme necessário)
+        if (current_value > 2048 && last_value <= 2048) {
+            if (last_edge_time != 0) {
+                current_period = current_time - last_edge_time;
+                float freq = 1000.0f / current_period; // Converter para Hz
+
+                // Armazenar no buffer circular
+                frequency_buffer[freq_buffer_index] = freq;
+                freq_buffer_index = (freq_buffer_index + 1) % FREQ_BUFFER_SIZE;
+
+                // Calcular e enviar média a cada 10 amostras
+                if (freq_buffer_index == 0) {
+                    float avg_freq = Calculate_Average_Frequency();
+                    char freq_str[50];
+                    // Converter o float para inteiros
+                    int32_t int_part = (int32_t)avg_freq;
+                    int32_t dec_part = (int32_t)((avg_freq - int_part) * FREQ_MULTIPLIER); // Multiplica por 100 para pegar 2 casas decimais
+                    //sprintf(freq_str, "Frequency: %.2f Hz\r\n", avg_freq);
+                    sprintf(freq_str, "Frequency: %ld.%02ld Hz\r\n", int_part, dec_part);
+                    CDC_Transmit_FS((uint8_t*)freq_str, strlen(freq_str));
+                }
+            }
+            last_edge_time = current_time;
+        }
+        last_value = current_value;
+
+        // Reiniciar conversão
+        HAL_ADC_Start_IT(hadc);
+    }
 }
 /* USER CODE END 0 */
 
@@ -245,10 +359,14 @@ int main(void)
   MX_USB_DEVICE_Init();
   MX_ADC1_Init();
   MX_I2C1_Init();
+  MX_ADC2_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
 
   // Pequeno delay para estabilização do I2C
   HAL_Delay(100);
+
+  HAL_ADC_Start(&hadc2);
 
   // Verifica se o PCF8574 está respondendo
 //  if (I2C_IsDeviceReady(0) != HAL_OK)
@@ -276,17 +394,18 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	    if (dataComplete) {
-	    	Update_I2C_Outputs();
-	        dataComplete = 0;
-	        config_complete = 1;
-	    }
+      if (operating_mode == MODE_MATRIX) {
+          if (dataComplete) {
+              Update_I2C_Outputs();
+              dataComplete = 0;
+              config_complete = 1;
+          }
 
-	    if (config_complete && adc_conversion_complete)
-	    {
-	        Send_ADC_USB();
-	        adc_conversion_complete = 0;
-	    }
+          if (config_complete && adc_conversion_complete) {
+              Send_ADC_USB();
+              adc_conversion_complete = 0;
+          }
+      }
 
 	}
   /* USER CODE END 3 */
@@ -450,6 +569,53 @@ static void MX_ADC1_Init(void)
 }
 
 /**
+  * @brief ADC2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC2_Init(void)
+{
+
+  /* USER CODE BEGIN ADC2_Init 0 */
+
+  /* USER CODE END ADC2_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC2_Init 1 */
+
+  /* USER CODE END ADC2_Init 1 */
+
+  /** Common config
+  */
+  hadc2.Instance = ADC2;
+  hadc2.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc2.Init.ContinuousConvMode = DISABLE;
+  hadc2.Init.DiscontinuousConvMode = DISABLE;
+  hadc2.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T3_TRGO;
+  hadc2.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc2.Init.NbrOfConversion = 1;
+  if (HAL_ADC_Init(&hadc2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_9;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_71CYCLES_5;
+  if (HAL_ADC_ConfigChannel(&hadc2, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC2_Init 2 */
+
+  /* USER CODE END ADC2_Init 2 */
+
+}
+
+/**
   * @brief I2C1 Initialization Function
   * @param None
   * @retval None
@@ -480,6 +646,51 @@ static void MX_I2C1_Init(void)
   /* USER CODE BEGIN I2C1_Init 2 */
 
   /* USER CODE END I2C1_Init 2 */
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 4800-1;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 10;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
 
 }
 
