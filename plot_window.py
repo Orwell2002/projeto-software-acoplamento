@@ -15,6 +15,7 @@ class PlotWindow(QMainWindow):
         super().__init__()
         self.num_curves = num_curves
         self.serial_port = serial.Serial(port, baudrate, timeout=1) # Reabre a porta serial
+        self.current_time = 0.0  # Tempo atual em segundos
         self.init_ui()
 
     def init_ui(self):
@@ -159,6 +160,46 @@ class PlotWindow(QMainWindow):
             df.to_csv(file_path, index=False)
             QMessageBox.information(self, "Gravação Concluída", f"Os dados foram salvos em {file_path}", QMessageBox.Ok)
 
+    def update_plot(self):
+        if not self.experiment_paused and self.serial_port.is_open:
+            try:
+                # Lê todos os bytes disponíveis
+                raw_data = self.serial_port.read(self.serial_port.in_waiting or 1)
+                
+                # Verifica se temos dados completos (8 canais * 3 bytes + 4 bytes de delta_time)
+                if len(raw_data) == (8 * 3 + 4):
+                    channel_data = {i: None for i in range(self.num_curves)}
+
+                    # Processa os dados dos canais
+                    for i in range(self.num_curves):
+                        offset = i * 3
+                        channel_id = raw_data[offset]
+                        lsb, msb = raw_data[offset + 1], raw_data[offset + 2]
+                        adc_value = int.from_bytes([lsb, msb], byteorder='little')
+                        channel_data[channel_id] = self.convert_adc_to_voltage(adc_value)
+
+                    # Extrai o delta_time (últimos 4 bytes)
+                    delta_time = int.from_bytes(raw_data[-4:], byteorder='little') / 1000.0
+
+                    # Atualiza o tempo acumulado
+                    self.current_time += delta_time
+                    self.time_data.append(self.current_time)
+
+                    # Adiciona dados dos canais
+                    for i in range(self.num_curves):
+                        if channel_data[i] is not None:
+                            self.data[i].append(channel_data[i])
+                        else:
+                            self.data[i].append(self.data[i][-1] if self.data[i] else 0)
+                        self.curves[i].setData(self.time_data, self.data[i])
+
+                    # Ajusta a visualização do gráfico
+                    self.plot_widget.setXRange(max(0, self.current_time - 5), self.current_time)
+
+            except serial.SerialException as e:
+                QMessageBox.critical(self, "Erro", f"Erro ao ler dados da porta serial: {e}")
+                self.stop_experiment()
+
     # def update_plot(self):
     #     if not self.experiment_paused:
     #         try:
@@ -198,46 +239,10 @@ class PlotWindow(QMainWindow):
     #             QMessageBox.critical(self, "Erro", f"Erro ao ler dados da porta serial: {e}")
     #             self.stop_experiment()
 
-    def update_plot(self):
-        if not self.experiment_paused and self.serial_port.is_open:
-            try:
-                raw_data = self.serial_port.read(self.serial_port.in_waiting or 1)
-                channel_data = {i: None for i in range(self.num_curves)}
-
-                # Processa os dados em blocos de 3 bytes
-                for i in range(0, len(raw_data), 3):
-                    if len(raw_data) - i < 3:
-                        break
-
-                    channel_id = raw_data[i]
-                    if channel_id < self.num_curves:
-                        lsb, msb = raw_data[i + 1], raw_data[i + 2]
-                        adc_value = int.from_bytes([lsb, msb], byteorder='little')
-                        channel_data[channel_id] = self.convert_adc_to_voltage(adc_value)
-
-                # Adiciona dados sincronizados
-                time = len(self.time_data) * (timerPeriod / 1000)
-                self.time_data.append(time)
-
-                for i in range(self.num_curves):
-                    if channel_data[i] is not None:
-                        self.data[i].append(channel_data[i])
-                    else:
-                        # Repete o último valor para manter o comprimento igual
-                        self.data[i].append(self.data[i][-1] if self.data[i] else 0)
-                    self.curves[i].setData(self.time_data, self.data[i])
-
-                # Ajuste do eixo X
-                self.plot_widget.setXRange(max(0, time - 10), time)
-
-            except serial.SerialException as e:
-                QMessageBox.critical(self, "Erro", f"Erro ao ler dados da porta serial: {e}")
-                self.stop_experiment()
-
     def convert_adc_to_voltage(self, adc_value):
-        # Converte valor ADC (0-4095) para tensão (0V-3.3V ou faixa equivalente)
-        # TODO: Fazer a conversão considerando o valor real e não acondicionado (-10V/+10V)
-        return (adc_value / 4095.0) * 3.3
+        adcVoltage = (adc_value / 4095.0) * 3.3
+        realVoltage = (adcVoltage / 0.16) - 10
+        return realVoltage
 
     def closeEvent(self, event):
         # Certifique-se de fechar a porta serial ao fechar a janela
