@@ -7,6 +7,7 @@ from node import Node
 from edge import Edge
 from history_manager import HistoryManager, AddEdgeAction, AddNodeAction, RemoveEdgeAction, RemoveNodeAction, CompositeAction
 from id_manager import IdManager
+from frequency_meter import FrequencyTunerDialog
 from styles import apply_styles
 from plot_window import PlotWindow
 
@@ -173,6 +174,10 @@ class MainWindow(QMainWindow):
         self.edge_type_selector = QComboBox(self)
         self.edge_type_selector.addItems(["Bidirecional", "Direcional"])
         self.top_layout.addWidget(self.edge_type_selector)
+
+        self.tune_button = QPushButton('Ajustar Frequência', self)
+        self.tune_button.clicked.connect(self.open_tuner)
+        self.top_layout.addWidget(self.tune_button)
 
         self.start_button = QPushButton('Iniciar', self)
         self.start_button.clicked.connect(self.start_experiment)
@@ -574,19 +579,39 @@ class MainWindow(QMainWindow):
         else:
             self.open_config_dialog()
 
-    def open_plot_window(self):
+    # def open_plot_window(self):
+    #     if not self.serial_port or not self.serial_port.is_open:
+    #         QMessageBox.critical(self, "Erro", "Nenhuma porta serial conectada corretamente.")
+    #         return
+        
+    #     num_nodes = len(self.nodes)
+        
+    #     # Desconecta a serial da tela principal
+    #     self.serial_port.close()
+        
+    #     # Passa a porta serial para a janela de plotagem
+    #     self.plot_window = PlotWindow(num_nodes, self.serial_port.port, self.serial_port.baudrate)
+    #     self.plot_window.show()
+    
+    def open_freqmeter_window(self):
         if not self.serial_port or not self.serial_port.is_open:
             QMessageBox.critical(self, "Erro", "Nenhuma porta serial conectada corretamente.")
             return
         
-        num_nodes = len(self.nodes)
-        
+        frequency = self.selected_node.frequency
+    
         # Desconecta a serial da tela principal
         self.serial_port.close()
         
-        # Passa a porta serial para a janela de plotagem
-        self.plot_window = PlotWindow(num_nodes, self.serial_port.port, self.serial_port.baudrate)
-        self.plot_window.show()
+        # Abre a porte de ajuste de frequência com frequência do oscilador selecionado
+        tuner = FrequencyTunerDialog(frequency, self.serial_port.port, self.serial_port.baudrate, self)
+        tuner.exec_()
+    
+    def open_tuner(self):
+        if self.selected_node and self.serial_port and self.serial_port.is_open:
+            self.open_freqmeter_window()
+        else:
+            QMessageBox.warning(self, "Aviso", "Selecione um nó e verifique a conexão serial.")
 
 
 def open_serial_connection(port, baudrate):

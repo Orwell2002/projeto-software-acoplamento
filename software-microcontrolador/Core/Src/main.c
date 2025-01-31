@@ -44,6 +44,9 @@
 #define FREQ_BUFFER_SIZE 10			// Buffer frequência para cálculo da média móvel
 #define FREQ_MULTIPLIER 100  		// Para manter 2 casas decimais
 #define PCF8574_BASE_ADDRESS 0x40  	// Endereço base do PCF8574 (A2, A1, A0 = 000)
+#define HYSTERESIS_HIGH 1850  // ~55% de 4095
+#define HYSTERESIS_LOW 1750   // ~45% de 4095
+#define MOVING_AVG_SIZE 10
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -61,25 +64,18 @@ I2C_HandleTypeDef hi2c1;
 TIM_HandleTypeDef htim3;
 
 /* USER CODE BEGIN PV */
-// Variáveis da mediçào do sinal
-uint32_t last_timestamp = 0;
-volatile uint8_t dataComplete = 0;
-volatile uint8_t receivingData = 0;
-uint16_t adc_buffer[ADC_BUFFER_SIZE];  // Buffer para armazenar os valores do ADC
-volatile uint8_t adc_conversion_complete = 0;
-volatile uint8_t config_complete = 0;  // Flag indicando que a configuração foi concluída
-
 // Variávies do acoplamento de rede
-float matrix[ADC_BUFFER_SIZE][ADC_BUFFER_SIZE];
-uint8_t matrixSize = 0;
+volatile uint8_t dataComplete = 0;				// Indica que matriz terminou de ser recebida
+volatile uint8_t receivingMatrix = 0;			// Indica que matriz está sendo recebida
+volatile uint8_t config_complete = 0;			// Indica que configuração de matriz foi completa
+float matrix[ADC_BUFFER_SIZE][ADC_BUFFER_SIZE];	// Matriz de adjascencia da rede
+uint8_t matrixSize = 0;							// Tamanho da matriz
 
 // Variáveis da medição de frequência
-volatile uint8_t operating_mode = MODE_MATRIX;
-volatile uint32_t last_edge_time = 0;
-volatile uint32_t current_period = 0;
-volatile uint8_t edge_detected = 0;
-float frequency_buffer[FREQ_BUFFER_SIZE];
-uint8_t freq_buffer_index = 0;
+volatile uint8_t operating_mode = MODE_MATRIX;	// Define tipo de operação, inicializa como definição de matriz
+uint32_t last_rising_edge = 0;					// Tempo da última borda de descida
+uint32_t periods[MOVING_AVG_SIZE];				// Vetor de períodos de oscilação
+uint8_t period_index = 0;						// Índice do último período
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -123,7 +119,7 @@ void Reset_Matrix(void) {
     }
 }
 
-// Função para imprimir matriz na serial (usada no debug)
+// DEBUG -> Função para imprimir matriz na serial
 void Print_Matrix_USB(void) {
     char line_buffer[128]; // Buffer para armazenar uma linha da matriz
     CDC_Transmit_FS((uint8_t *)"\n", 1); // Linha vazia para separação
@@ -144,37 +140,6 @@ void Print_Matrix_USB(void) {
 HAL_StatusTypeDef I2C_IsDeviceReady(uint8_t i)
 {
     return HAL_I2C_IsDeviceReady(&hi2c1, PCF8574_BASE_ADDRESS + i, 3, HAL_MAX_DELAY);
-}
-
-// Envia dados do ADC pela serial
-void Send_ADC_USB(void)
-{
-    uint32_t current_timestamp = HAL_GetTick();
-    uint32_t delta_time = current_timestamp - last_timestamp;
-
-    // Tamanho do buffer: ADC (8 canais * 3 bytes) + delta_time (4 bytes)
-    uint8_t usb_tx_buffer[ADC_BUFFER_SIZE * 3 + 4];
-
-    // Adiciona os dados dos canais ADC
-    for (int i = 0; i < ADC_BUFFER_SIZE; i++)
-    {
-        usb_tx_buffer[i * 3] = i;  // ID do canal (0-7)
-        usb_tx_buffer[i * 3 + 1] = adc_buffer[i] & 0xFF;  // LSB do valor do ADC
-        usb_tx_buffer[i * 3 + 2] = (adc_buffer[i] >> 8) & 0xFF;  // MSB do valor do ADC
-    }
-
-    // Adiciona o delta_time nos últimos 4 bytes
-    usb_tx_buffer[ADC_BUFFER_SIZE * 3] = delta_time & 0xFF;
-    usb_tx_buffer[ADC_BUFFER_SIZE * 3 + 1] = (delta_time >> 8) & 0xFF;
-    usb_tx_buffer[ADC_BUFFER_SIZE * 3 + 2] = (delta_time >> 16) & 0xFF;
-    usb_tx_buffer[ADC_BUFFER_SIZE * 3 + 3] = (delta_time >> 24) & 0xFF;
-
-    // Envia o pacote via USB
-    CDC_Transmit_FS(usb_tx_buffer, sizeof(usb_tx_buffer));
-
-    // Atualiza o timestamp do último envio
-    last_timestamp = current_timestamp;
-    HAL_Delay(10);
 }
 
 // Função para processar um byte recebido
@@ -211,18 +176,18 @@ void Process_Byte(uint8_t byte)
             Reset_Matrix();
             row = 0;
             col = 0;
-            receivingData = 1;
+            receivingMatrix = 1;
             return;
         }
 
         if (byte == END_MARKER) {
-            receivingData = 0;
+            receivingMatrix = 0;
             dataComplete = 1;
             matrixSize = row + 1;
             return;
         }
 
-        if (receivingData) {
+        if (receivingMatrix) {
             if (byte == '1') {
                 matrix[row][col] = 1;
             } else if (byte == '0') {
@@ -237,15 +202,6 @@ void Process_Byte(uint8_t byte)
     }
 }
 
-// Função para cálculo de média móvel da frequência
-float Calculate_Average_Frequency(void)
-{
-    float sum = 0;
-    for(uint8_t i = 0; i < FREQ_BUFFER_SIZE; i++) {
-        sum += frequency_buffer[i];
-    }
-    return sum / FREQ_BUFFER_SIZE;
-}
 
 // Função para atualizar as saídas I2C baseada na matriz
 void Update_I2C_Outputs(void) {
@@ -278,50 +234,68 @@ void Update_I2C_Outputs(void) {
     CDC_Transmit_FS(ack, 5);
 }
 
+// Detecção de borda com histerese
+uint8_t Detect_Rising_Edge(uint16_t current_value, uint16_t *last_value) {
+    static uint8_t state = 0;  // 0: baixo, 1: alto
+
+    if (state == 0 && current_value > HYSTERESIS_HIGH) {
+        state = 1;
+        *last_value = current_value;
+        return 1;
+    }
+    else if (state == 1 && current_value < HYSTERESIS_LOW) {
+        state = 0;
+    }
+
+    *last_value = current_value;
+    return 0;
+}
+
+// Cálculo de frequência com média móvel
+float Calculate_Frequency(uint32_t new_period) {
+    periods[period_index] = new_period;
+    period_index = (period_index + 1) % MOVING_AVG_SIZE;
+
+    uint32_t avg_period = 0;
+    for(uint8_t i = 0; i < MOVING_AVG_SIZE; i++) {
+        avg_period += periods[i];
+    }
+    avg_period /= MOVING_AVG_SIZE;
+
+    // Converte período em ms para frequência em Hz
+    if(avg_period > 0) {
+        return 1000.0f / avg_period;
+    }
+    return 0.0f;
+}
+
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
-    if (hadc->Instance == ADC1)
-    {
-        adc_conversion_complete = 1;
-    }
-    else if (hadc->Instance == ADC2 && operating_mode == MODE_FREQUENCY)
-    {
+//    if (hadc->Instance == ADC1)
+//    {
+//        adc_conversion_complete = 1;
+//    }
+    if(hadc->Instance == ADC2 && operating_mode == MODE_FREQUENCY) {
         static uint16_t last_value = 0;
         uint16_t current_value = HAL_ADC_GetValue(hadc);
-        uint32_t current_time = HAL_GetTick();
 
-//        // Debug prints
-//        char debug_str[50];
-//        sprintf(debug_str, "ADC2 Value: %d\r\n", current_value);
-//        CDC_Transmit_FS((uint8_t*)debug_str, strlen(debug_str));
+        // Detecta borda de subida com histerese
+        if(Detect_Rising_Edge(current_value, &last_value)) {
+            uint32_t current_time = HAL_GetTick();
 
-        // Detectar borda de subida (pode ser ajustado conforme necessário)
-        if (current_value > 2048 && last_value <= 2048) {
-            if (last_edge_time != 0) {
-                current_period = current_time - last_edge_time;
-                float freq = 1000.0f / current_period; // Converter para Hz
+            if(last_rising_edge > 0) {
+                uint32_t period = current_time - last_rising_edge;
+                float freq = Calculate_Frequency(period);
 
-                // Armazenar no buffer circular
-                frequency_buffer[freq_buffer_index] = freq;
-                freq_buffer_index = (freq_buffer_index + 1) % FREQ_BUFFER_SIZE;
-
-                // Calcular e enviar média a cada 10 amostras
-                if (freq_buffer_index == 0) {
-                    float avg_freq = Calculate_Average_Frequency();
-                    char freq_str[50];
-                    // Converter o float para inteiros
-                    int32_t int_part = (int32_t)avg_freq;
-                    int32_t dec_part = (int32_t)((avg_freq - int_part) * FREQ_MULTIPLIER); // Multiplica por 100 para pegar 2 casas decimais
-                    //sprintf(freq_str, "Frequency: %.2f Hz\r\n", avg_freq);
-                    sprintf(freq_str, "Frequency: %ld.%02ld Hz\r\n", int_part, dec_part);
-                    CDC_Transmit_FS((uint8_t*)freq_str, strlen(freq_str));
-                }
+                char freq_str[50];
+                int32_t int_part = (int32_t)freq;
+                int32_t dec_part = (int32_t)((freq - int_part) * 100);
+                sprintf(freq_str, "#FRQ:%ld.%02ld$\r\n", int_part, dec_part);
+                CDC_Transmit_FS((uint8_t*)freq_str, strlen(freq_str));
             }
-            last_edge_time = current_time;
+            last_rising_edge = current_time;
         }
-        last_value = current_value;
 
-        // Reiniciar conversão
         HAL_ADC_Start_IT(hadc);
     }
 }
@@ -383,7 +357,7 @@ int main(void)
   Reset_All_PCF8574();
 
   // Inicialização do ADC
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, ADC_BUFFER_SIZE);
+  // HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, ADC_BUFFER_SIZE);
 
   /* USER CODE END 2 */
 
@@ -399,11 +373,6 @@ int main(void)
               Update_I2C_Outputs();
               dataComplete = 0;
               config_complete = 1;
-          }
-
-          if (config_complete && adc_conversion_complete) {
-              Send_ADC_USB();
-              adc_conversion_complete = 0;
           }
       }
 
@@ -670,7 +639,7 @@ static void MX_TIM3_Init(void)
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 4800-1;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 10;
+  htim3.Init.Period = 10-1;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
