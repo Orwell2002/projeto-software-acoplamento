@@ -8,7 +8,7 @@ class FrequencyTunerDialog(QDialog):
     def __init__(self, target_frequency, port, baudrate, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Ajuste de Frequência")
-        self.setMinimumSize(400, 500)
+        self.setMinimumSize(600, 500)
         
         # Configurações iniciais
         self.target_frequency = target_frequency
@@ -39,6 +39,7 @@ class FrequencyTunerDialog(QDialog):
         # Widget customizado para o galvanômetro
         self.meter = MeterWidget(self)
         layout.addWidget(self.meter)
+        self.meter.set_target(self.target_frequency)
         
         # Label para frequência atual
         self.current_label = QLabel("Frequência Atual: 0.00 Hz")
@@ -113,7 +114,9 @@ class FrequencyTunerDialog(QDialog):
         if percent_diff > 80:
             return "#ff4444"  # Vermelho
         elif percent_diff > 40:
-            return "#ffaa00"  # Amarelo
+            return "#ffaa00"  # Laranja
+        elif percent_diff > 10:
+            return "#ffFF00"  # Amarelo
         return "#44ff44"  # Verde
     
     def closeEvent(self, event):
@@ -126,10 +129,15 @@ class MeterWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.value = 0
-        self.setMinimumSize(300, 200)
+        self.target_frequency = 0
+        self.setMinimumSize(300, 300)  # Aumentada a altura mínima
     
     def set_value(self, value):
         self.value = max(-100, min(100, value))
+        self.update()
+
+    def set_target(self, value):
+        self.target_frequency = value
         self.update()
     
     def paintEvent(self, event):
@@ -138,26 +146,67 @@ class MeterWidget(QWidget):
         
         # Desenha o fundo do medidor
         rect = self.rect()
-        center = rect.center()
-        radius = min(rect.width(), rect.height() * 1.5) / 2
+        
+        # Ajusta o centro para considerar apenas o semicírculo superior
+        center = QPointF(rect.center().x(), rect.bottom() - rect.height()/3 + 50)
+        radius = min(rect.width(), rect.height()) * 0.8  # Ajusta o raio proporcionalmente
+        
+        # Define o retângulo para o arco
+        arc_rect = QRectF(
+            center.x() - radius,
+            center.y() - radius,
+            radius * 2,
+            radius * 2
+        )
         
         # Desenha o arco de fundo
         painter.setPen(QPen(QColor(60, 60, 60), 20))
-        painter.drawArc(QRectF(center.x() - radius, center.y() - radius,
-                              radius * 2, radius * 2), -180 * 16, 180 * 16)
+        painter.drawArc(arc_rect, 180 * 16, -180 * 16)
         
         # Desenha as marcações
         painter.setPen(QPen(Qt.white, 2))
-        for i in range(-90, 91, 15):
-            angle = math.radians(i)
+        for i in range(0, 181, 15):
+            angle = math.radians(180 - i)
             x1 = center.x() + (radius - 15) * math.cos(angle)
             y1 = center.y() - (radius - 15) * math.sin(angle)
             x2 = center.x() + (radius - 30) * math.cos(angle)
             y2 = center.y() - (radius - 30) * math.sin(angle)
             painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+            
+            # Adiciona os números nas marcações principais
+            if i % 30 == 0:
+                text_radius = radius - 45
+                text_x = center.x() + text_radius * math.cos(angle)
+                text_y = center.y() - text_radius * math.sin(angle)
+                
+                # Calcula o valor da escala baseado na frequência alvo
+                # Mapeia de -0.5 a +0.5 Hz em torno da frequência alvo
+                scale_value = self.target_frequency + (-0.5 + (i / 180) * 1.0)
+                
+                # Configura a fonte
+                font = painter.font()
+                if i == 90:
+                    font.setBold(True)
+                font.setPointSize(8)
+                font.setBold(False)
+                painter.setFont(font)
+                
+                # Centraliza o texto na posição
+                metrics = painter.fontMetrics()
+                text = f"{scale_value:.2f}"
+                text_width = metrics.width(text)
+                text_height = metrics.height()
+                
+                painter.drawText(
+                    int(text_x - text_width/2),
+                    int(text_y + text_height/4),
+                    text
+                )
+        
+        # Calcula o ângulo do ponteiro
+        angle = math.radians(180 - ((self.value + 100) / 200 * 180))
         
         # Desenha o ponteiro
-        angle = math.radians(self.value * 0.9)  # 0.9 para limitar a 90 graus
         pointer_length = radius - 40
         
         painter.setPen(QPen(Qt.white, 4))
@@ -170,3 +219,18 @@ class MeterWidget(QWidget):
         # Desenha o centro do ponteiro
         painter.setBrush(QBrush(Qt.white))
         painter.drawEllipse(center, 5, 5)
+        
+        # Adiciona o texto da frequência alvo no centro
+        font = painter.font()
+        font.setPointSize(12)
+        painter.setFont(font)
+        
+        target_text = f"{self.target_frequency:.1f} Hz"
+        metrics = painter.fontMetrics()
+        text_width = metrics.width(target_text)
+        
+        painter.drawText(
+            int(center.x() - text_width/2),
+            int(center.y() + radius/2),
+            target_text
+        )
