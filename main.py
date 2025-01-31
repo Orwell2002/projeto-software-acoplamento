@@ -34,6 +34,7 @@ class CustomGraphicsScene(QGraphicsScene):
         if event.button() == Qt.LeftButton:
             item = self.itemAt(event.scenePos(), QTransform())
             if item is None:
+                self.clearSelection()
                 self.main_window.deselect_item()
                 self.selection_rect_start = event.scenePos()
                 self.selection_rect = QGraphicsRectItem()
@@ -58,20 +59,22 @@ class CustomGraphicsScene(QGraphicsScene):
         super().mouseReleaseEvent(event)
 
     def update_selection(self, rect):
+        self.clearSelection()
+
         for item in self.items():
             if isinstance(item, Node) or isinstance(item, Edge):
                 if rect.intersects(item.sceneBoundingRect()):
                     item.setSelected(True)
-                    # if isinstance(item, Node):
-                    #     self.main_window.highlight_node(item, True)
-                    # elif isinstance(item, Edge):
-                    #     self.main_window.highlight_edge(item, True)
+                    if isinstance(item, Node):
+                        self.main_window.highlight_node(item, True)
+                    elif isinstance(item, Edge):
+                        self.main_window.highlight_edge(item, True)
                 else:
                     item.setSelected(False)
-                    # if isinstance(item, Node):
-                    #     self.main_window.highlight_node(item, False)
-                    # elif isinstance(item, Edge):
-                    #     self.main_window.highlight_edge(item, False)
+                    if isinstance(item, Node):
+                        self.main_window.highlight_node(item, False)
+                    elif isinstance(item, Edge):
+                        self.main_window.highlight_edge(item, False)
 
 class CustomGraphicsView(QGraphicsView):
     def __init__(self, *args, **kwargs):
@@ -313,7 +316,7 @@ class MainWindow(QMainWindow):
                 self.highlight_node(node, False)  # Remove o destaque do nó
         else:
             if self.selected_node and self.selected_node != node:
-                # Deselect the previously selected node
+                # Desseleciona o nó selecionado anteriormente
                 self.deselect_node()
             self.highlight_node(node, True)  # Destaque o nó selecionado
             self.selected_node = node

@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QGraphicsLineItem, QMenu, QGraphicsItem
+from PyQt5.QtWidgets import QGraphicsLineItem, QMenu, QStyle
 from PyQt5.QtCore import Qt, QPointF, QLineF
 from PyQt5.QtGui import QPen, QColor, QPainter, QPolygonF, QIcon
 import math
@@ -20,8 +20,7 @@ class Edge(QGraphicsLineItem):
         self.start_node = start_node
         self.end_node = end_node
         self.bidirectional = bidirectional
-        self.setPen(QPen(QColor(255, 255, 255), 2))  # Define a cor e largura da linha
-        # self.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        self.setPen(QPen(QColor(255, 255, 255), 2))
         self.update_position()
     
     def update_position(self):
@@ -153,3 +152,10 @@ class Edge(QGraphicsLineItem):
             self.main_window.delete_edge(self)
         elif action == invert_direction_action:
             self.main_window.invert_edge_direction(self)
+    
+    def paint(self, painter, option, widget=None):
+        """
+        Substitui a renderização padrão para remover a seleção visual (borda de seleção azul quadrada).
+        """
+        option.state &= ~QStyle.State_Selected  # Remove a seleção
+        super().paint(painter, option, widget)

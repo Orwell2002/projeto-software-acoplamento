@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsItem, QMenu
+from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsItem, QMenu, QStyle
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QColor, QPen, QIcon
 
@@ -14,6 +14,8 @@ class Node(QGraphicsEllipseItem):
         text (QGraphicsTextItem): Texto exibido com o ID do nó.
         frequency_text (QGraphicsTextItem): Texto exibido com a frequência do nó.
     """
+
+
 
     def __init__(self, x, y, id, main_window, parent=None):
         """
@@ -53,7 +55,6 @@ class Node(QGraphicsEllipseItem):
         self.setFlag(QGraphicsItem.ItemIsMovable)
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges)
-        # self.setFlag(QGraphicsItem.ItemIsSelectable, False)
 
         # Configura o texto da frequência do nó
         frequency_font = QFont("Arial", 10)
@@ -165,3 +166,10 @@ class Node(QGraphicsEllipseItem):
             self.frequency_text.setPlainText(f'{self.frequency:.2f} Hz')
         else:
             self.frequency_text.setPlainText('')
+
+    def paint(self, painter, option, widget=None):
+        """
+        Substitui a renderização padrão para remover a seleção visual (borda de seleção azul quadrada).
+        """
+        option.state &= ~QStyle.State_Selected  # Remove a seleção
+        super().paint(painter, option, widget)
