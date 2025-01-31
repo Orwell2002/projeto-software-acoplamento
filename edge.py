@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QGraphicsLineItem, QMenu
+from PyQt5.QtWidgets import QGraphicsLineItem, QMenu, QGraphicsItem
 from PyQt5.QtCore import Qt, QPointF, QLineF
 from PyQt5.QtGui import QPen, QColor, QPainter, QPolygonF, QIcon
 import math
@@ -21,6 +21,7 @@ class Edge(QGraphicsLineItem):
         self.end_node = end_node
         self.bidirectional = bidirectional
         self.setPen(QPen(QColor(255, 255, 255), 2))  # Define a cor e largura da linha
+        # self.setFlag(QGraphicsItem.ItemIsSelectable, False)
         self.update_position()
     
     def update_position(self):

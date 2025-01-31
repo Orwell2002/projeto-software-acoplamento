@@ -53,6 +53,7 @@ class Node(QGraphicsEllipseItem):
         self.setFlag(QGraphicsItem.ItemIsMovable)
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges)
+        # self.setFlag(QGraphicsItem.ItemIsSelectable, False)
 
         # Configura o texto da frequência do nó
         frequency_font = QFont("Arial", 10)

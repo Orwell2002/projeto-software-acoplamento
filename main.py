@@ -6,6 +6,7 @@ import serial.tools.list_ports
 from node import Node
 from edge import Edge
 from history_manager import HistoryManager, AddEdgeAction, AddNodeAction, RemoveEdgeAction, RemoveNodeAction, CompositeAction
+from id_manager import IdManager
 from styles import apply_styles
 from plot_window import PlotWindow
 
@@ -224,6 +225,7 @@ class MainWindow(QMainWindow):
         self.start_node = None
         self.serial_port = None
         self.history_manager = HistoryManager()
+        self.id_manager = IdManager() 
     
     def open_config_dialog(self):
         ports = [port.device for port in serial.tools.list_ports.comports()]
@@ -247,20 +249,18 @@ class MainWindow(QMainWindow):
             response = self.serial_port.read_until(b"ACK\n")
             if b"ACK" in response:
                 QMessageBox.information(self, "Configuração Concluída", "A matriz de acoplamento foi enviada e recebida com sucesso.", QMessageBox.Ok)
-                self.open_plot_window()
+                # self.open_plot_window()
             else:
                 QMessageBox.critical(self, "Erro", "Falha ao receber confirmação do microcontrolador.")
         else:
             QMessageBox.critical(self, "Erro", "Falha ao enviar a matriz de acoplamento para o microcontrolador.")
     
     def add_node(self):
-        frequency, ok = QInputDialog.getDouble(self, "Adicionar Nó", "Frequência de Oscilação:", 1.00, 0.01, 100.0, 2)
+        frequency, ok = QInputDialog.getDouble(self, "Adicionar Nó", "Frequência de Oscilação:", 1.00, 0.01, 99.99, 2)
         if ok:
-            if self.available_ids:
-                node_id = self.available_ids.pop(0)
-            else:
-                node_id = self.node_id_counter
-                self.node_id_counter += 1
+            node_id = self.id_manager.get_next_id()
+            new_node = Node(self.scene.sceneRect().center().x(), self.scene.sceneRect().center().y(), node_id, self)
+            self.id_manager.add_id(node_id)
             new_node = Node(self.scene.sceneRect().center().x(), self.scene.sceneRect().center().y(), node_id, self)
             new_node.set_frequency(frequency)
             new_node.setFlag(QGraphicsItem.ItemIsSelectable, True)
@@ -392,11 +392,14 @@ class MainWindow(QMainWindow):
             node.setFlag(QGraphicsItem.ItemIsMovable, movable)
     
     def generate_coupling_matrix(self):
-        n = len(self.nodes)
+        # Ordenar nós por ID antes de gerar a matriz
+        sorted_nodes = sorted(self.nodes, key=lambda x: x.id)
+        n = len(sorted_nodes)
         matrix = [[0]*n for _ in range(n)]
+        
         for edge in self.edges:
-            start_index = self.nodes.index(edge.start_node)
-            end_index = self.nodes.index(edge.end_node)
+            start_index = sorted_nodes.index(edge.start_node)
+            end_index = sorted_nodes.index(edge.end_node)
             matrix[start_index][end_index] = 1
             if edge.bidirectional:
                 matrix[end_index][start_index] = 1
@@ -417,14 +420,20 @@ class MainWindow(QMainWindow):
             self.update_graph()
 
     def edit_node_id(self, node):
-        new_id, ok = QInputDialog.getInt(self, "Editar ID do Nó", "Novo ID:", node.id, 1, 999)
+        new_id, ok = QInputDialog.getInt(self, "Editar ID do Nó", "Novo ID:", node.id, 1, max(self.id_manager.used_ids) + 1)
         if ok:
-            node.id = new_id
-            node.text.setPlainText(str(new_id))  # Atualiza o texto do nó com o novo ID
+            if self.id_manager.is_valid_id(new_id):
+                old_id = node.id
+                self.id_manager.release_id(old_id)
+                self.id_manager.add_id(new_id)
+                node.id = new_id
+                node.text.setPlainText(str(new_id))
+            else:
+                QMessageBox.warning(self, "ID Inválido", "O ID deve ser sequencial e único.")
 
     def delete_node(self, node):
         if node in self.nodes:
-            self.available_ids.append(node.id)
+            self.id_manager.release_id(node.id)
             self.nodes.remove(node)
             self.scene.removeItem(node)
 
@@ -469,7 +478,10 @@ class MainWindow(QMainWindow):
         with open(filename, 'r') as f:
             config = json.load(f)
         
-        # Clear existing nodes and edges
+        # Limpar o gerenciador de IDs
+        self.id_manager = IdManager()
+
+        # Limpar nós e arestas existentes
         for node in self.nodes:
             self.scene.removeItem(node)
         self.nodes.clear()
@@ -477,15 +489,16 @@ class MainWindow(QMainWindow):
             self.scene.removeItem(edge)
         self.edges.clear()
 
-        # Add nodes
+        # Adicionar nós
         for node_data in config['nodes']:
             node = Node(node_data['x'], node_data['y'], node_data['id'], self)
+            self.id_manager.add_id(node_data['id'])
             node.set_frequency(node_data['frequency'])
             node.set_color(QColor(node_data['color']))
             self.scene.addItem(node)
             self.nodes.append(node)
 
-        # Add edges
+        # Adicionar arestas
         for edge_data in config['edges']:
             start_node = next(node for node in self.nodes if node.id == edge_data['start_node'])
             end_node = next(node for node in self.nodes if node.id == edge_data['end_node'])
