@@ -153,9 +153,9 @@ class Edge(QGraphicsLineItem):
         elif action == invert_direction_action:
             self.main_window.invert_edge_direction(self)
     
-    def paint(self, painter, option, widget=None):
-        """
-        Substitui a renderização padrão para remover a seleção visual (borda de seleção azul quadrada).
-        """
-        option.state &= ~QStyle.State_Selected  # Remove a seleção
-        super().paint(painter, option, widget)
+    # def paint(self, painter, option, widget=None):
+    #     """
+    #     Substitui a renderização padrão para remover a seleção visual (borda de seleção azul quadrada).
+    #     """
+    #     option.state &= ~QStyle.State_Selected  # Remove a seleção
+    #     super().paint(painter, option, widget)

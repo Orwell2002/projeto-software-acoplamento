@@ -599,12 +599,9 @@ class MainWindow(QMainWindow):
             return
         
         frequency = self.selected_node.frequency
-    
-        # Desconecta a serial da tela principal
-        self.serial_port.close()
-        
+
         # Abre a porte de ajuste de frequência com frequência do oscilador selecionado
-        tuner = FrequencyTunerDialog(frequency, self.serial_port.port, self.serial_port.baudrate, self)
+        tuner = FrequencyTunerDialog(frequency, self.serial_port, self)
         tuner.exec_()
     
     def open_tuner(self):

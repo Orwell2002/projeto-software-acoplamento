@@ -5,7 +5,7 @@ import math
 import serial
 
 class FrequencyTunerDialog(QDialog):
-    def __init__(self, target_frequency, port, baudrate, parent=None):
+    def __init__(self, target_frequency, serial_port, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Ajuste de Frequência")
         self.setMinimumSize(600, 500)
@@ -14,7 +14,8 @@ class FrequencyTunerDialog(QDialog):
         self.target_frequency = target_frequency
         self.current_frequency = target_frequency
         self.range = 0.5  # Range de ±0.5 Hz
-        self.serial_port = serial.Serial(port, baudrate, timeout=1)
+        self.serial_port = serial_port
+        self.serial_port.timeout = 1
         
         # Setup da UI
         self.setup_ui()
@@ -122,7 +123,6 @@ class FrequencyTunerDialog(QDialog):
     def closeEvent(self, event):
         self.stop_reading()
         self.update_timer.stop()
-        self.serial_port.close()
         super().closeEvent(event)
 
 class MeterWidget(QWidget):
