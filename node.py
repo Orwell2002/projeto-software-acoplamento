@@ -1,5 +1,6 @@
-from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsItem, QMenu, QStyle
-from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsItem, QMenu, QStyle, QGraphicsPolygonItem
+from PyQt5.QtGui import QPolygonF
+from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QFont, QColor, QPen, QIcon
 
 class Node(QGraphicsEllipseItem):
@@ -62,6 +63,9 @@ class Node(QGraphicsEllipseItem):
         self.frequency_text.setFont(frequency_font)
         self.frequency_text.setDefaultTextColor(QColor(255, 255, 255))
         self.update_frequency_text_position()
+
+        # Marcação se frequência foi ou não configurada
+        self.frequency_tuned = False
     
     def set_color(self, color):
         """
@@ -173,3 +177,25 @@ class Node(QGraphicsEllipseItem):
         """
         option.state &= ~QStyle.State_Selected  # Remove a seleção
         super().paint(painter, option, widget)
+
+    def mark_tuned(self, tuned=True):
+        """
+        Marca oscilador com frequência configurada.
+        """
+        self.frequency_tuned = tuned
+        if tuned:
+            # Adiciona uma marca visual
+            self.tuned_marker = QGraphicsPolygonItem(self)
+            polygon = QPolygonF([
+                QPointF(20, -20),
+                QPointF(30, -20),
+                QPointF(25, -10)
+            ])
+            self.tuned_marker.setBrush(QColor(0, 255, 0))  # Verde
+            self.tuned_marker.setPen(QPen(QColor(0, 170, 20)))  # Borda branca
+            self.tuned_marker.setPolygon(polygon)
+        else:
+            # Remove a marca se existir
+            if hasattr(self, 'tuned_marker'):
+                self.scene().removeItem(self.tuned_marker)
+                del self.tuned_marker

@@ -416,6 +416,7 @@ class MainWindow(QMainWindow):
     def edit_frequency(self, node):
         new_frequency, ok = QInputDialog.getDouble(self, "Editar Frequência", "Nova Frequência:", node.frequency, 0.01, 100.00, 2)
         if ok:
+            node.mark_tuned(False)  # Se a frequência mudou, desmarca como ajustado
             node.set_frequency(new_frequency)
             node.update_frequency_text()
             self.update_graph()
@@ -607,6 +608,9 @@ class MainWindow(QMainWindow):
     def open_tuner(self):
         if self.selected_node and self.serial_port and self.serial_port.is_open:
             self.open_freqmeter_window()
+            # Marca como ajustado após o tuner ser fechado
+            if self.selected_node:
+                self.selected_node.mark_tuned(True)
         else:
             QMessageBox.warning(self, "Aviso", "Selecione um nó e verifique a conexão serial.")
 
