@@ -2,7 +2,7 @@
 
 ## Descrição
 
-A aplicação é uma ferramenta desktop desenvolvida para Windows, projetada para o controle e análise de redes de osciladores de quadratura. A aplicação permite definir a topologia da rede, configurar os parâmetros dos nós, plotar dados em tempo real, e realizar comunicação serial com um microcontrolador STM32 para o gerenciamento dos experimentos.
+A aplicação é uma ferramenta desktop desenvolvida para Windows, projetada para o controle e análise de redes de osciladores de quadratura. A aplicação permite definir a topologia da rede, configurar os parâmetros dos nós e realizar comunicação serial com um microcontrolador STM32 para o gerenciamento dos experimentos. Na pasta "software-microcontrolador" é possível encontrar o software em C responsável por receber os dados da interface no microcontrolador, definir as topologias de forma automática e realizar as medições de frequência dos sinais.
 
 ## Funcionalidades
 
@@ -12,9 +12,7 @@ A aplicação é uma ferramenta desktop desenvolvida para Windows, projetada par
 
 - **Comunicação Serial**: Conecte-se ao microcontrolador STM32 via UART/USART para enviar dados da topologia e receber medições das senoides de saída.
 
-- **Plotagem em Tempo Real**: Visualize dados de saída dos osciladores em tempo real, com gráficos atualizados dinamicamente conforme o experimento avança.
-
-- **Cálculo de Parâmetros**: Calcule parâmetros importantes para o experimento de redes dinâmicas, como o parâmetro de ordem da rede.
+- **Ajuste de Frequências**: Visualize frequência do sinal de saída dos osciladores em tempo real, auxiliando no ajuste da frequência desejada para os nós da rede.
 
 - **Armazenamento de Topologias**: Salve e carregue topologias de redes para futuras análises. Suporte para configurações e ajustes persistentes.
 
@@ -44,6 +42,10 @@ A aplicação é uma ferramenta desktop desenvolvida para Windows, projetada par
     
     Isso abrirá a interface gráfica da aplicação.
 
+4. **Gravação do Microcontrolador**:
+
+   Na pasta software-microcontrolador, abra o projeto tcc.ioc no programa STM32CubeIDE e grave o firmware no microcontrolador.
+
 ## Uso
 
 1. **Configuração Inicial**: No canto superior esquerdo, clique no botão de configurações para definir parâmetros iniciais e conectar-se ao microcontrolador.
@@ -56,4 +58,4 @@ A aplicação é uma ferramenta desktop desenvolvida para Windows, projetada par
 
 5. **Iniciar Experimento**: Clique no botão "Iniciar" para converter a topologia em uma matriz de acoplamento e enviar os dados para o microcontrolador.
 
-6. **Visualizar Dados**: Acompanhe os dados dos osciladores em tempo real através dos gráficos fornecidos pela aplicação.
+6. **Ajustar Frequência**: Selecione um nó e acompanhe a frequência de oscilação em tempo real, com alta precisão, auxiliando no ajuste para a frequência desejada.
