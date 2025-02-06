@@ -205,10 +205,9 @@ void Process_Byte(uint8_t byte)
 
 // Função para atualizar as saídas I2C baseada na matriz
 void Update_I2C_Outputs(void) {
-	Print_Matrix_USB(); // Chama a função para imprimir a matriz na serial
-  /*
+    Print_Matrix_USB(); // Chama a função para imprimir a matriz na serial
     for (uint8_t i = 0; i < matrixSize; i++) {
-       uint8_t outputByte = 0;
+        uint8_t outputByte = 0;
 
         // Converte cada linha da matriz em um byte para o PCF8574
         for (uint8_t j = 0; j < matrixSize; j++) {
@@ -220,34 +219,33 @@ void Update_I2C_Outputs(void) {
         // Envia o byte para o PCF8574 correspondente
         HAL_I2C_Master_Transmit(&hi2c1, PCF8574_BASE_ADDRESS + i, &outputByte, 1, HAL_MAX_DELAY);
     }
-  */
 
-    uint8_t outputBytes[2] = {0, 0}; // Dois módulos PCF8574
+    // uint8_t outputBytes[2] = {0, 0}; // Dois módulos PCF8574
     
-    // Mapeamento manual para a nova configuração 3x3
-    outputBytes[0] |= (matrix[0][0] << 0); // P0  -> matriz[0][0]
-    outputBytes[0] |= (matrix[0][1] << 1); // P1  -> matriz[0][1]
-    outputBytes[0] |= (matrix[0][2] << 2); // P2  -> matriz[0][2]
-    outputBytes[0] |= (matrix[1][0] << 3); // P3  -> matriz[1][0]
-    outputBytes[0] |= (matrix[1][1] << 4); // P4  -> matriz[1][1]
-    outputBytes[0] |= (matrix[1][2] << 5); // P5  -> matriz[1][2]
-    outputBytes[0] |= (matrix[2][0] << 6); // P6  -> matriz[2][0]
-    outputBytes[0] |= (matrix[2][1] << 7); // P7  -> matriz[2][1]
+    // // Mapeamento manual para a nova configuração 3x3
+    // outputBytes[0] |= (matrix[0][0] << 0); // P0  -> matriz[0][0]
+    // outputBytes[0] |= (matrix[0][1] << 1); // P1  -> matriz[0][1]
+    // outputBytes[0] |= (matrix[0][2] << 2); // P2  -> matriz[0][2]
+    // outputBytes[0] |= (matrix[1][0] << 3); // P3  -> matriz[1][0]
+    // outputBytes[0] |= (matrix[1][1] << 4); // P4  -> matriz[1][1]
+    // outputBytes[0] |= (matrix[1][2] << 5); // P5  -> matriz[1][2]
+    // outputBytes[0] |= (matrix[2][0] << 6); // P6  -> matriz[2][0]
+    // outputBytes[0] |= (matrix[2][1] << 7); // P7  -> matriz[2][1]
     
-    outputBytes[1] |= (matrix[2][2] << 0); // P0 (segundo módulo) -> matriz[2][2]
+    // outputBytes[1] |= (matrix[2][2] << 0); // P0 (segundo módulo) -> matriz[2][2]
     
-    // Envia os bytes para os dois módulos PCF8574
-    HAL_I2C_Master_Transmit(&hi2c1, PCF8574_BASE_ADDRESS + 0, &outputBytes[0], 1, HAL_MAX_DELAY);
-    HAL_I2C_Master_Transmit(&hi2c1, PCF8574_BASE_ADDRESS + 1, &outputBytes[1], 1, HAL_MAX_DELAY);
+    // // Envia os bytes para os dois módulos PCF8574
+    // HAL_I2C_Master_Transmit(&hi2c1, PCF8574_BASE_ADDRESS + 0, &outputBytes[0], 1, HAL_MAX_DELAY);
+    // HAL_I2C_Master_Transmit(&hi2c1, PCF8574_BASE_ADDRESS + 1, &outputBytes[1], 1, HAL_MAX_DELAY);
 
     // Piscar LED para indicação
-	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-	HAL_Delay(50);
-	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-	HAL_Delay(100);
-	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-	HAL_Delay(100);
-	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    HAL_Delay(50);
+    HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    HAL_Delay(100);
+    HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    HAL_Delay(100);
+    HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 
     // Envia confirmação pela USB
     uint8_t ack[] = "ACK\n";
