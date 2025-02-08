@@ -477,8 +477,14 @@ class MainWindow(QMainWindow):
 
     def save_configuration(self, filename):
         config = {
-            'nodes': [{'id': node.id, 'x': node.pos().x(), 'y': node.pos().y(), 'frequency': node.frequency, 'color': node.default_color.name()} for node in self.nodes],
-            'edges': [{'start_node': edge.start_node.id, 'end_node': edge.end_node.id, 'bidirectional': edge.bidirectional} for edge in self.edges]
+            'nodes': [{'id': node.id, 
+                       'x': node.pos().x(), 
+                       'y': node.pos().y(), 
+                       'frequency': node.frequency, 
+                       'color': node.default_color.name()} for node in self.nodes],
+            'edges': [{'start_node': edge.start_node.id, 
+                       'end_node': edge.end_node.id, 
+                       'bidirectional': edge.bidirectional} for edge in self.edges]
         }
         with open(filename, 'w') as f:
             json.dump(config, f)
